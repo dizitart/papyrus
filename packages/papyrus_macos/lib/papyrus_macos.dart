@@ -9,16 +9,21 @@ class PapyrusMacos extends PapyrusPlatform {
   static const bool _forceDesktopOverlay = bool.fromEnvironment(
     'PAPYRUS_FORCE_DESKTOP_OVERLAY',
   );
+  static const bool _useNativePlatformView = bool.fromEnvironment(
+    'PAPYRUS_USE_NATIVE_MACOS_PLATFORM_VIEW',
+  );
+  static const bool _preferDesktopOverlay =
+      _forceDesktopOverlay || !_useNativePlatformView;
 
   static void registerWith() {
     PapyrusPlatform.instance = PapyrusMacos();
   }
 
   @override
-  bool get supportsNativeView => !_forceDesktopOverlay;
+  bool get supportsNativeView => !_preferDesktopOverlay;
 
   @override
-  bool get supportsOverlaySurface => _forceDesktopOverlay;
+  bool get supportsOverlaySurface => _preferDesktopOverlay;
 
   @override
   String get viewType => 'dev.papyrus.papyrus_macos/webview';
@@ -148,7 +153,7 @@ Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
   'ephemeral': configuration.storage.ephemeral,
   'autoHeight': configuration.display.autoHeight,
   'zoomEnabled': configuration.display.zoomEnabled,
-  'desktopOverlay': PapyrusMacos._forceDesktopOverlay,
+  'desktopOverlay': PapyrusMacos._preferDesktopOverlay,
   'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
 };
 

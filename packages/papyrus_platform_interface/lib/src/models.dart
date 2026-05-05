@@ -107,7 +107,7 @@ class PapyrusHtmlRequest extends PapyrusLoadRequest {
   @override
   JsonMap toMap() => {
     'type': type,
-    'html': html,
+    'html': PapyrusHtmlComposer.ensureDocument(html),
     'baseUri': baseUri?.toString(),
     'metadata': metadata?.toMap(),
     'virtualResources': virtualResources
@@ -871,7 +871,34 @@ class PapyrusPlatformCapabilities {
 class PapyrusHtmlComposer {
   const PapyrusHtmlComposer._();
 
+  static String ensureDocument(String html) {
+    final doctypePattern = RegExp(r'<!doctype\s+html', caseSensitive: false);
+    if (doctypePattern.hasMatch(html)) {
+      return html;
+    }
+
+    final htmlPattern = RegExp(r'<html(\s[^>]*)?>', caseSensitive: false);
+    if (htmlPattern.hasMatch(html)) {
+      return html;
+    }
+
+    final hasHead = RegExp(
+      r'<head(\s[^>]*)?>',
+      caseSensitive: false,
+    ).hasMatch(html);
+    final hasBody = RegExp(
+      r'<body(\s[^>]*)?>',
+      caseSensitive: false,
+    ).hasMatch(html);
+    if (hasHead || hasBody) {
+      return '<!doctype html><html>$html</html>';
+    }
+
+    return '<!doctype html><html><head></head><body>$html</body></html>';
+  }
+
   static String injectContentSecurityPolicy(String html, String policy) {
+    html = ensureDocument(html);
     final meta =
         '<meta http-equiv="Content-Security-Policy" content="${_escape(policy)}">';
     final headPattern = RegExp(r'<head(\s[^>]*)?>', caseSensitive: false);

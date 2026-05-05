@@ -23,19 +23,21 @@ const String _overlaySmokeHtml = '''
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('forced macOS desktop overlay attaches and renders HTML', (
+  testWidgets('macOS desktop overlay attaches and renders HTML', (
     tester,
   ) async {
     if (defaultTargetPlatform != TargetPlatform.macOS) {
       return;
     }
-    const forceOverlay = bool.fromEnvironment('PAPYRUS_FORCE_DESKTOP_OVERLAY');
+    const useNativePlatformView = bool.fromEnvironment(
+      'PAPYRUS_USE_NATIVE_MACOS_PLATFORM_VIEW',
+    );
     expect(
-      forceOverlay,
-      isTrue,
+      useNativePlatformView,
+      isFalse,
       reason:
-          'Run with --dart-define=PAPYRUS_FORCE_DESKTOP_OVERLAY=true to test '
-          'the desktop overlay path on macOS.',
+          'Run without PAPYRUS_USE_NATIVE_MACOS_PLATFORM_VIEW so the default '
+          'desktop overlay path is exercised on macOS.',
     );
 
     final controller = PapyrusController.create();
@@ -83,6 +85,93 @@ void main() {
     expect(image.width, greaterThanOrEqualTo(360));
     expect(image.height, greaterThanOrEqualTo(220));
   });
+
+  testWidgets('example-style macOS overlay renders visible content', (
+    tester,
+  ) async {
+    if (defaultTargetPlatform != TargetPlatform.macOS) {
+      return;
+    }
+
+    final controller = PapyrusController.create();
+    addTearDown(() async => controller.dispose());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          appBar: AppBar(title: const Text('Papyrus Example')),
+          body: Column(
+            children: [
+              SegmentedButton<PapyrusConfiguration>(
+                segments: const [
+                  ButtonSegment<PapyrusConfiguration>(
+                    value: PapyrusConfiguration(
+                      resources: PapyrusResourcePolicy(
+                        remoteResources: PapyrusRemoteResourceMode.askHostApp,
+                      ),
+                      navigation: PapyrusNavigationPolicy(
+                        defaultDecision:
+                            PapyrusNavigationDecision.openExternally,
+                      ),
+                    ),
+                    label: Text('Docs'),
+                  ),
+                  ButtonSegment<PapyrusConfiguration>(
+                    value: PapyrusConfiguration(
+                      navigation: PapyrusNavigationPolicy(
+                        defaultDecision:
+                            PapyrusNavigationDecision.openExternally,
+                        requireUserGestureForExternalOpen: true,
+                        allowMainFrameNavigation: false,
+                        allowSubFrameNavigation: false,
+                      ),
+                      resources: PapyrusResourcePolicy(
+                        remoteResources: PapyrusRemoteResourceMode.block,
+                      ),
+                      javascript: PapyrusJavaScriptPolicy(
+                        mode: PapyrusJavaScriptMode.disabled,
+                      ),
+                      storage: PapyrusStoragePolicy(
+                        cookies: PapyrusCookiePolicy.block,
+                        localStorage: PapyrusStorageMode.disabled,
+                        ephemeral: true,
+                      ),
+                      display: PapyrusDisplayPolicy(autoHeight: true),
+                    ),
+                    label: Text('Email'),
+                  ),
+                ],
+                selected: {PapyrusProfiles.documentViewer()},
+                onSelectionChanged: (_) {},
+              ),
+              Expanded(
+                child: PapyrusView(
+                  controller: controller,
+                  configuration: PapyrusProfiles.documentViewer(),
+                  initialRequest: const PapyrusHtmlRequest(
+                    html: '<h1>Papyrus</h1><p>Controlled HTML content.</p>',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final state = await _waitForOverlay(tester);
+    expect(state['overlayAttached'], isTrue);
+    expect(state['webViewAttached'], isTrue);
+    expect(state['visible'], isTrue);
+    final snapshot = await _waitForSnapshot(tester, controller);
+    expect(snapshot.length, greaterThan(0));
+    final image = await _decodeSnapshot(snapshot);
+    addTearDown(image.dispose);
+    final hasVisibleContent = await _containsVisibleNonWhitePixel(image);
+    if (!hasVisibleContent) {
+      throw TestFailure('overlayState=$state');
+    }
+  });
 }
 
 Future<Map<String, Object?>> _waitForOverlay(WidgetTester tester) async {
@@ -122,4 +211,22 @@ Future<ui.Image> _decodeSnapshot(Uint8List bytes) async {
   final codec = await ui.instantiateImageCodec(bytes);
   final frame = await codec.getNextFrame();
   return frame.image;
+}
+
+Future<bool> _containsVisibleNonWhitePixel(ui.Image image) async {
+  final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  if (byteData == null) {
+    return false;
+  }
+  final bytes = byteData.buffer.asUint8List();
+  for (var offset = 0; offset <= bytes.length - 4; offset += 4) {
+    final red = bytes[offset];
+    final green = bytes[offset + 1];
+    final blue = bytes[offset + 2];
+    final alpha = bytes[offset + 3];
+    if (alpha > 0 && (red < 245 || green < 245 || blue < 245)) {
+      return true;
+    }
+  }
+  return false;
 }

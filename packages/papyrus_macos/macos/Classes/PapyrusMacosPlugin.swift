@@ -7,6 +7,8 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
   private weak var flutterView: NSView?
   private var overlayContainer: NSView?
   private var webView: WKWebView?
+  private var pendingLoad: [String: Any]?
+  private var pendingViewport: [String: Any]?
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "dev.papyrus.papyrus_macos", binaryMessenger: registrar.messenger)
@@ -74,6 +76,8 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
       WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: Date(timeIntervalSince1970: 0)) {}
       result(nil)
     case "dispose":
+      pendingLoad = nil
+      pendingViewport = nil
       webView?.removeFromSuperview()
       webView = nil
       overlayContainer?.removeFromSuperview()
@@ -99,24 +103,35 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
     } else {
       webConfig.preferences.javaScriptEnabled = config["allowJavaScript"] as? Bool == true
     }
-    let view = WKWebView(frame: .zero, configuration: webConfig)
+    let view = PapyrusMacosTrackingWebView(frame: .zero, configuration: webConfig)
+    view.onDidMoveToWindow = { [weak self] in
+      self?.runPendingLoadIfNeeded()
+    }
     view.navigationDelegate = self
     view.uiDelegate = self
+    if let existingView = webView, existingView !== view {
+      existingView.removeFromSuperview()
+    }
     webView = view
     if config["desktopOverlay"] as? Bool == true {
       attachOverlayWebView(view)
     }
+    applyPendingViewportIfNeeded()
+    runPendingLoadIfNeeded()
     return view
   }
 
   private func attachOverlayWebView(_ view: WKWebView) {
     guard let flutterView else { return }
-    let container = overlayContainer ?? PapyrusMacosOverlayContainer(frame: flutterView.bounds)
+    let host = flutterView.superview ?? flutterView
+    let container = overlayContainer ?? PapyrusMacosOverlayContainer(frame: flutterView.frame)
     container.autoresizingMask = [.width, .height]
     container.wantsLayer = true
     container.layer?.backgroundColor = NSColor.clear.cgColor
-    if container.superview == nil {
-      flutterView.addSubview(container, positioned: .above, relativeTo: nil)
+    container.frame = flutterView.frame
+    if container.superview !== host {
+      container.removeFromSuperview()
+      host.addSubview(container, positioned: .above, relativeTo: nil)
     }
     overlayContainer = container
     if view.superview !== container {
@@ -127,11 +142,14 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
   }
 
   private func setViewport(_ args: [String: Any]) {
-    guard let view = webView, let flutterView else { return }
+    guard let view = webView, let flutterView else {
+      pendingViewport = args
+      return
+    }
     if overlayContainer == nil || view.superview == nil {
       attachOverlayWebView(view)
     }
-    overlayContainer?.frame = flutterView.bounds
+    overlayContainer?.frame = flutterView.frame
     let x = cgFloat(args["x"])
     let y = cgFloat(args["y"])
     let width = cgFloat(args["width"])
@@ -155,12 +173,39 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
   }
 
   private func load(request: [String: Any]) {
-    if webView == nil { createWebView(config: [:]) }
-    guard let view = webView else { return }
+    guard let view = webView else {
+      pendingLoad = request
+      return
+    }
+    guard view.window != nil else {
+      pendingLoad = request
+      return
+    }
+    load(request, into: view)
+  }
+
+  private func applyPendingViewportIfNeeded() {
+    guard let args = pendingViewport else { return }
+    pendingViewport = nil
+    setViewport(args)
+  }
+
+  private func runPendingLoadIfNeeded() {
+    guard let request = pendingLoad, let view = webView, view.window != nil else { return }
+    pendingLoad = nil
+    load(request, into: view)
+  }
+
+  private func load(_ request: [String: Any], into view: WKWebView) {
     switch request["type"] as? String {
     case "html":
       let base = (request["baseUri"] as? String).flatMap(URL.init(string:))
-      view.loadHTMLString(request["html"] as? String ?? "", baseURL: base)
+      let html = request["html"] as? String ?? ""
+      if base == nil, let url = htmlDataURL(for: html) {
+        view.load(URLRequest(url: url))
+      } else {
+        view.loadHTMLString(html, baseURL: base)
+      }
     case "uri":
       if let value = request["uri"] as? String, let url = URL(string: value) {
         view.load(URLRequest(url: url))
@@ -216,6 +261,14 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
     decisionHandler(.allow)
   }
 
+  private func htmlDataURL(for html: String) -> URL? {
+    guard let data = html.data(using: .utf8) else {
+      return nil
+    }
+    let base64 = data.base64EncodedString()
+    return URL(string: "data:text/html;charset=utf-8;base64,\(base64)")
+  }
+
   private func capabilities() -> [String: Bool] {
     [
       "supportsResourceInterception": true,
@@ -237,6 +290,15 @@ private func cgFloat(_ value: Any?) -> CGFloat {
   if let value = value as? Int { return CGFloat(value) }
   if let value = value as? NSNumber { return CGFloat(truncating: value) }
   return 0
+}
+
+private class PapyrusMacosTrackingWebView: WKWebView {
+  var onDidMoveToWindow: (() -> Void)?
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    onDidMoveToWindow?()
+  }
 }
 
 private class PapyrusMacosOverlayContainer: NSView {

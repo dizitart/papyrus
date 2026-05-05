@@ -27,7 +27,8 @@ void main() {
       expect(request.validate, returnsNormally);
       expect(request.toMap(), {
         'type': 'html',
-        'html': '<p>Hello</p>',
+        'html':
+            '<!doctype html><html><head></head><body><p>Hello</p></body></html>',
         'baseUri': 'papyrus-resource://message/1/',
         'metadata': {
           'contentType': 'text/html',
@@ -119,6 +120,11 @@ void main() {
     });
 
     test('CSP injection is deterministic for fragments and documents', () {
+      expect(
+        PapyrusHtmlComposer.ensureDocument('<p>Hello</p>'),
+        '<!doctype html><html><head></head><body><p>Hello</p></body></html>',
+      );
+
       expect(
         PapyrusHtmlComposer.injectContentSecurityPolicy(
           '<p>Hello</p>',

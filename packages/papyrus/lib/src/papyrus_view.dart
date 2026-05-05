@@ -59,6 +59,7 @@ class _PapyrusViewState extends State<PapyrusView> {
   StreamSubscription<PapyrusEvent>? _subscription;
   bool _nativeViewCreated = false;
   bool _initialLoadStarted = false;
+  bool _overlayViewportReady = false;
 
   @override
   void initState() {
@@ -73,15 +74,49 @@ class _PapyrusViewState extends State<PapyrusView> {
   @override
   void didUpdateWidget(PapyrusView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller) {
+    final controllerChanged = oldWidget.controller != widget.controller;
+    final configurationChanged =
+        _configurationSignature(oldWidget.configuration) !=
+        _configurationSignature(widget.configuration);
+    final initialRequestChanged =
+        _requestSignature(oldWidget.initialRequest) !=
+        _requestSignature(widget.initialRequest);
+
+    if (controllerChanged) {
       unawaited(_subscription?.cancel());
       _subscription = widget.controller.events.listen(_handleEvent);
       widget.onCreated?.call(widget.controller);
+    }
+
+    if (controllerChanged || configurationChanged || initialRequestChanged) {
       _initialLoadStarted = false;
-      _nativeViewCreated = _usesMethodChannelSurface;
-      if (_nativeViewCreated) {
+    }
+
+    if (controllerChanged) {
+      _nativeViewCreated = false;
+      _overlayViewportReady = false;
+      if (_usesMethodChannelSurface) {
         _initializeMethodChannelSurface();
       }
+      return;
+    }
+
+    if (_usesMethodChannelSurface) {
+      if (configurationChanged) {
+        _initializeMethodChannelSurface();
+      } else if (initialRequestChanged) {
+        _loadInitialRequest();
+      }
+      return;
+    }
+
+    if (configurationChanged) {
+      _nativeViewCreated = false;
+      return;
+    }
+
+    if (initialRequestChanged) {
+      _loadInitialRequest();
     }
   }
 
@@ -124,7 +159,10 @@ class _PapyrusViewState extends State<PapyrusView> {
   Widget build(BuildContext context) {
     final platform = PapyrusPlatform.instance;
     if (platform.supportsOverlaySurface) {
-      return _DesktopOverlaySurface(controller: widget.controller);
+      return _DesktopOverlaySurface(
+        controller: widget.controller,
+        onViewportReady: _handleOverlayViewportReady,
+      );
     }
 
     final viewType = platform.viewType;
@@ -136,6 +174,7 @@ class _PapyrusViewState extends State<PapyrusView> {
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return AndroidView(
+          key: ValueKey<String>(_configurationSignature(widget.configuration)),
           viewType: viewType,
           onPlatformViewCreated: _handlePlatformViewCreated,
           gestureRecognizers: widget.gestureRecognizers,
@@ -144,6 +183,7 @@ class _PapyrusViewState extends State<PapyrusView> {
         );
       case TargetPlatform.iOS:
         return UiKitView(
+          key: ValueKey<String>(_configurationSignature(widget.configuration)),
           viewType: viewType,
           onPlatformViewCreated: _handlePlatformViewCreated,
           gestureRecognizers: widget.gestureRecognizers,
@@ -152,6 +192,7 @@ class _PapyrusViewState extends State<PapyrusView> {
         );
       case TargetPlatform.macOS:
         return AppKitView(
+          key: ValueKey<String>(_configurationSignature(widget.configuration)),
           viewType: viewType,
           onPlatformViewCreated: _handlePlatformViewCreated,
           gestureRecognizers: widget.gestureRecognizers,
@@ -172,11 +213,12 @@ class _PapyrusViewState extends State<PapyrusView> {
   }
 
   void _initializeMethodChannelSurface() {
-    _nativeViewCreated = true;
+    _nativeViewCreated = false;
     final controller = widget.controller;
     unawaited(
       controller.initialize(configuration: widget.configuration).then((_) {
         if (!mounted || widget.controller != controller) return;
+        _nativeViewCreated = true;
         _loadInitialRequest();
       }),
     );
@@ -184,10 +226,20 @@ class _PapyrusViewState extends State<PapyrusView> {
 
   void _loadInitialRequest() {
     if (!_nativeViewCreated || _initialLoadStarted) return;
+    if (PapyrusPlatform.instance.supportsOverlaySurface &&
+        !_overlayViewportReady) {
+      return;
+    }
     final request = widget.initialRequest;
     if (request == null) return;
     _initialLoadStarted = true;
     unawaited(widget.controller.load(request));
+  }
+
+  void _handleOverlayViewportReady() {
+    if (_overlayViewportReady) return;
+    _overlayViewportReady = true;
+    _loadInitialRequest();
   }
 
   bool get _usesMethodChannelSurface {
@@ -197,9 +249,13 @@ class _PapyrusViewState extends State<PapyrusView> {
 }
 
 class _DesktopOverlaySurface extends StatefulWidget {
-  const _DesktopOverlaySurface({required this.controller});
+  const _DesktopOverlaySurface({
+    required this.controller,
+    required this.onViewportReady,
+  });
 
   final PapyrusController controller;
+  final VoidCallback onViewportReady;
 
   @override
   State<_DesktopOverlaySurface> createState() => _DesktopOverlaySurfaceState();
@@ -255,7 +311,10 @@ class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
     _scheduleViewportSync();
     return MouseRegion(
       opaque: false,
-      child: ColoredBox(key: _key, color: Colors.transparent),
+      child: SizedBox.expand(
+        key: _key,
+        child: const ColoredBox(color: Colors.transparent),
+      ),
     );
   }
 
@@ -297,6 +356,9 @@ class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
         visible: snapshot.visible,
       ),
     );
+    if (snapshot.visible && snapshot.width > 0 && snapshot.height > 0) {
+      widget.onViewportReady();
+    }
   }
 }
 
@@ -376,3 +438,9 @@ Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
   'debuggingEnabled': configuration.platform.debuggingEnabled,
   'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
 };
+
+String _configurationSignature(PapyrusConfiguration configuration) =>
+    _configurationMap(configuration).toString();
+
+String? _requestSignature(PapyrusLoadRequest? request) =>
+    request?.toMap().toString();

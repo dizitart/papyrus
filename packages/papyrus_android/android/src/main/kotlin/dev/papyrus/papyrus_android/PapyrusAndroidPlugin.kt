@@ -25,6 +25,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private lateinit var channel: MethodChannel
     private lateinit var appContext: Context
     private var webView: WebView? = null
+    private var pendingLoad: Map<*, *>? = null
     private var progress: Double = 0.0
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -41,6 +42,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         channel.setMethodCallHandler(null)
         webView?.destroy()
         webView = null
+        pendingLoad = null
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -69,7 +71,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 "printDocument" -> { printDocument(call.arguments as? Map<*, *>); result.success(null) }
                 "clearCache" -> { webView?.clearCache(true); result.success(null) }
                 "clearStorage" -> { webView?.clearHistory(); result.success(null) }
-                "dispose" -> { webView?.destroy(); webView = null; result.success(null) }
+                "dispose" -> { webView?.destroy(); webView = null; pendingLoad = null; result.success(null) }
                 "getCapabilities" -> result.success(capabilities())
                 else -> result.notImplemented()
             }
@@ -84,6 +86,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         configureWebView(view, config)
         webView?.destroy()
         webView = view
+        runPendingLoadIfNeeded()
         return view
     }
 
@@ -151,9 +154,20 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private fun load(request: Map<*, *>) {
         val view = webView ?: run {
-            createWebView(emptyMap<Any, Any>())
-            webView!!
+            pendingLoad = request
+            return
         }
+        load(request, view)
+    }
+
+    private fun runPendingLoadIfNeeded() {
+        val request = pendingLoad ?: return
+        val view = webView ?: return
+        pendingLoad = null
+        load(request, view)
+    }
+
+    private fun load(request: Map<*, *>, view: WebView) {
         when (request["type"]) {
             "html" -> view.loadDataWithBaseURL(
                 request["baseUri"] as? String,

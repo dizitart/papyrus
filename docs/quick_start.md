@@ -18,3 +18,8 @@ PapyrusView(
 Use `PapyrusProfiles.lockedDown()` for untrusted static HTML and opt into more
 permissive policies only when the content source is trusted.
 
+On macOS, sandboxed apps must include the
+`com.apple.security.network.client` entitlement for `WKWebView` to load
+content reliably. Add it to both `DebugProfile.entitlements` and
+`Release.entitlements` in the host runner.
+

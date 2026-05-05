@@ -89,6 +89,71 @@ void main() {
     );
   });
 
+  testWidgets('PapyrusView reloads when the initial request changes', (
+    tester,
+  ) async {
+    final platform = MethodSurfacePapyrusPlatform();
+    PapyrusPlatform.instance = platform;
+    final controller = PapyrusController.create();
+
+    await tester.pumpWidget(
+      PapyrusView(
+        controller: controller,
+        initialRequest: const PapyrusHtmlRequest(html: '<p>First</p>'),
+      ),
+    );
+    await tester.pump();
+
+    await tester.pumpWidget(
+      PapyrusView(
+        controller: controller,
+        initialRequest: const PapyrusHtmlRequest(html: '<p>Second</p>'),
+      ),
+    );
+    await tester.pump();
+
+    expect(platform.loaded, hasLength(2));
+    expect((platform.loaded.first as PapyrusHtmlRequest).html, '<p>First</p>');
+    expect((platform.loaded.last as PapyrusHtmlRequest).html, '<p>Second</p>');
+  });
+
+  testWidgets('PapyrusView reapplies method-surface configuration changes', (
+    tester,
+  ) async {
+    final platform = MethodSurfacePapyrusPlatform();
+    PapyrusPlatform.instance = platform;
+    final controller = PapyrusController.create();
+
+    await tester.pumpWidget(
+      PapyrusView(
+        controller: controller,
+        configuration: PapyrusProfiles.documentViewer(),
+        initialRequest: const PapyrusHtmlRequest(html: '<p>Config</p>'),
+      ),
+    );
+    await tester.pump();
+
+    await tester.pumpWidget(
+      PapyrusView(
+        controller: controller,
+        configuration: PapyrusProfiles.browserLike(),
+        initialRequest: const PapyrusHtmlRequest(html: '<p>Config</p>'),
+      ),
+    );
+    await tester.pump();
+
+    expect(platform.createdConfigurations, hasLength(2));
+    expect(
+      platform.createdConfigurations.first.security.allowJavaScript,
+      isFalse,
+    );
+    expect(
+      platform.createdConfigurations.last.security.allowJavaScript,
+      isTrue,
+    );
+    expect(platform.loaded, hasLength(2));
+  });
+
   test('unsupported snapshot surfaces structured platform error', () async {
     final platform = RecordingPapyrusPlatform();
     PapyrusPlatform.instance = platform;
@@ -214,5 +279,16 @@ class OverlayPapyrusPlatform extends RecordingPapyrusPlatform {
       'devicePixelRatio': devicePixelRatio,
       'visible': visible,
     });
+  }
+}
+
+class MethodSurfacePapyrusPlatform extends RecordingPapyrusPlatform {
+  final createdConfigurations = <PapyrusConfiguration>[];
+
+  @override
+  Future<void> create({
+    PapyrusConfiguration configuration = const PapyrusConfiguration(),
+  }) async {
+    createdConfigurations.add(configuration);
   }
 }

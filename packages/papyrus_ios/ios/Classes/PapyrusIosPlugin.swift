@@ -5,6 +5,7 @@ import WebKit
 public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WKUIDelegate {
   private var channel: FlutterMethodChannel?
   private var webView: WKWebView?
+  private var pendingLoad: [String: Any]?
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "dev.papyrus.papyrus_ios", binaryMessenger: registrar.messenger())
@@ -65,6 +66,7 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
       WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: Date(timeIntervalSince1970: 0)) {}
       result(nil)
     case "dispose":
+      pendingLoad = nil
       webView = nil
       result(nil)
     case "getCapabilities":
@@ -91,12 +93,25 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
     view.navigationDelegate = self
     view.uiDelegate = self
     webView = view
+    runPendingLoadIfNeeded()
     return view
   }
 
   private func load(request: [String: Any]) {
-    if webView == nil { createWebView(config: [:]) }
-    guard let view = webView else { return }
+    guard let view = webView else {
+      pendingLoad = request
+      return
+    }
+    load(request, into: view)
+  }
+
+  private func runPendingLoadIfNeeded() {
+    guard let request = pendingLoad, let view = webView else { return }
+    pendingLoad = nil
+    load(request, into: view)
+  }
+
+  private func load(_ request: [String: Any], into view: WKWebView) {
     switch request["type"] as? String {
     case "html":
       let base = (request["baseUri"] as? String).flatMap(URL.init(string:))
