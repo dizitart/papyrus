@@ -1,0 +1,27 @@
+name: papyrus_android
+description: Android System WebView implementation for Papyrus.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+  flutter: ">=3.41.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  papyrus_platform_interface:
+    path: ../papyrus_platform_interface
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    implements: papyrus
+    platforms:
+      android:
+        package: dev.papyrus.papyrus_android
+        pluginClass: PapyrusAndroidPlugin
+        dartPluginClass: PapyrusAndroid
+

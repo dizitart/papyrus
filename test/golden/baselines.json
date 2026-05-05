@@ -1,0 +1,6 @@
+{
+  "strategy": "per-platform",
+  "platforms": ["android", "ios", "macos", "windows", "linux"],
+  "note": "Each native engine owns its own screenshot baseline. Papyrus does not compare all engines to one universal image."
+}
+

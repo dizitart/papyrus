@@ -1,0 +1,15 @@
+name: papyrus_platform_interface
+description: Shared platform interface and data contracts for Papyrus.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  plugin_platform_interface: ^2.1.8
+
+dev_dependencies:
+  test: ^1.26.0
+  lints: ^6.0.0
+

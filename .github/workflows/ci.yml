@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: cd packages/papyrus_platform_interface && flutter test
+      - run: cd packages/papyrus_platform_interface && flutter analyze
+      - run: cd packages/papyrus && flutter test
+      - run: cd packages/papyrus && flutter analyze
+      - run: cd packages/papyrus_android && flutter analyze
+      - run: cd packages/papyrus_ios && flutter analyze
+      - run: cd packages/papyrus_macos && flutter analyze
+      - run: cd packages/papyrus_windows && flutter analyze
+      - run: cd packages/papyrus_linux && flutter analyze
+      - run: flutter test test/acceptance_test.dart

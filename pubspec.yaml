@@ -1,0 +1,30 @@
+name: papyrus_workspace
+publish_to: none
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  papyrus:
+    path: packages/papyrus
+  papyrus_android:
+    path: packages/papyrus_android
+  papyrus_ios:
+    path: packages/papyrus_ios
+  papyrus_linux:
+    path: packages/papyrus_linux
+  papyrus_macos:
+    path: packages/papyrus_macos
+  papyrus_platform_interface:
+    path: packages/papyrus_platform_interface
+  papyrus_windows:
+    path: packages/papyrus_windows
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  test: ^1.26.0

@@ -1,0 +1,25 @@
+{
+  "fixtures": [
+    {
+      "id": "table-heavy-html",
+      "description": "Nested and table-heavy controlled HTML fixture"
+    },
+    {
+      "id": "blocked-tracking-pixel",
+      "description": "Strict profile blocks remote tracking image"
+    },
+    {
+      "id": "virtual-image",
+      "description": "Virtual resource image resolves without file access"
+    },
+    {
+      "id": "rtl-cjk-emoji",
+      "description": "RTL, CJK, emoji, and web-safe font text"
+    },
+    {
+      "id": "malformed-browser-recoverable",
+      "description": "Malformed but browser-recoverable HTML"
+    }
+  ]
+}
+
