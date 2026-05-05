@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:papyrus_platform_interface/papyrus_platform_interface.dart';
 
 import 'papyrus_controller.dart';
@@ -55,15 +56,38 @@ class PapyrusView extends StatefulWidget {
 
 class _PapyrusViewState extends State<PapyrusView> {
   StreamSubscription<PapyrusEvent>? _subscription;
+  bool _nativeViewCreated = false;
+  bool _initialLoadStarted = false;
 
   @override
   void initState() {
     super.initState();
     widget.onCreated?.call(widget.controller);
     _subscription = widget.controller.events.listen(_handleEvent);
-    final request = widget.initialRequest;
-    if (request != null) {
-      unawaited(widget.controller.load(request));
+    if (!PapyrusPlatform.instance.supportsNativeView) {
+      _nativeViewCreated = true;
+      unawaited(
+        widget.controller.initialize(configuration: widget.configuration),
+      );
+      _loadInitialRequest();
+    }
+  }
+
+  @override
+  void didUpdateWidget(PapyrusView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      unawaited(_subscription?.cancel());
+      _subscription = widget.controller.events.listen(_handleEvent);
+      widget.onCreated?.call(widget.controller);
+      _initialLoadStarted = false;
+      _nativeViewCreated = !PapyrusPlatform.instance.supportsNativeView;
+      if (_nativeViewCreated) {
+        unawaited(
+          widget.controller.initialize(configuration: widget.configuration),
+        );
+        _loadInitialRequest();
+      }
     }
   }
 
@@ -92,6 +116,94 @@ class _PapyrusViewState extends State<PapyrusView> {
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox.shrink();
+    final platform = PapyrusPlatform.instance;
+    final viewType = platform.viewType;
+    if (!platform.supportsNativeView || viewType == null) {
+      return const _UnsupportedNativeView();
+    }
+
+    final creationParams = _configurationMap(widget.configuration);
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return AndroidView(
+          viewType: viewType,
+          onPlatformViewCreated: _handlePlatformViewCreated,
+          gestureRecognizers: widget.gestureRecognizers,
+          creationParams: creationParams,
+          creationParamsCodec: const StandardMessageCodec(),
+        );
+      case TargetPlatform.iOS:
+        return UiKitView(
+          viewType: viewType,
+          onPlatformViewCreated: _handlePlatformViewCreated,
+          gestureRecognizers: widget.gestureRecognizers,
+          creationParams: creationParams,
+          creationParamsCodec: const StandardMessageCodec(),
+        );
+      case TargetPlatform.macOS:
+        return AppKitView(
+          viewType: viewType,
+          onPlatformViewCreated: _handlePlatformViewCreated,
+          gestureRecognizers: widget.gestureRecognizers,
+          creationParams: creationParams,
+          creationParamsCodec: const StandardMessageCodec(),
+        );
+      case TargetPlatform.fuchsia:
+      case TargetPlatform.linux:
+      case TargetPlatform.windows:
+        return const _UnsupportedNativeView();
+    }
+  }
+
+  void _handlePlatformViewCreated(int id) {
+    if (!mounted) return;
+    _nativeViewCreated = true;
+    _loadInitialRequest();
+  }
+
+  void _loadInitialRequest() {
+    if (!_nativeViewCreated || _initialLoadStarted) return;
+    final request = widget.initialRequest;
+    if (request == null) return;
+    _initialLoadStarted = true;
+    unawaited(widget.controller.load(request));
   }
 }
+
+class _UnsupportedNativeView extends StatelessWidget {
+  const _UnsupportedNativeView();
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: const Color(0xFFFAFAFA),
+      child: Directionality(
+        textDirection: TextDirection.ltr,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              'Papyrus native WebView embedding is not available on this Flutter platform.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
+  'allowJavaScript':
+      configuration.security.allowJavaScript ||
+      configuration.javascript.mode != PapyrusJavaScriptMode.disabled,
+  'allowFileAccess': configuration.security.allowFileAccess,
+  'allowPopups': configuration.security.allowPopups,
+  'allowMixedContent': configuration.security.allowMixedContent,
+  'ephemeral': configuration.storage.ephemeral,
+  'autoHeight': configuration.display.autoHeight,
+  'zoomEnabled': configuration.display.zoomEnabled,
+  'textZoom': configuration.display.textZoom,
+  'debuggingEnabled': configuration.platform.debuggingEnabled,
+};

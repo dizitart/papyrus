@@ -16,6 +16,10 @@ abstract class PapyrusPlatform {
 
   Stream<PapyrusEvent> get events => const Stream.empty();
 
+  bool get supportsNativeView => false;
+
+  String? get viewType => null;
+
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
   }) async {}

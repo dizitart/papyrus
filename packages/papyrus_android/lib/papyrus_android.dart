@@ -12,6 +12,12 @@ class PapyrusAndroid extends PapyrusPlatform {
   }
 
   @override
+  bool get supportsNativeView => true;
+
+  @override
+  String get viewType => 'dev.papyrus.papyrus_android/webview';
+
+  @override
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
   }) {

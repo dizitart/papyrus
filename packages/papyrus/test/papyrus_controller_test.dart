@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/widgets.dart';
 import 'package:papyrus/papyrus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -48,6 +49,11 @@ void main() {
 
     expect(created, same(controller));
     expect(platform.loaded.single, isA<PapyrusHtmlRequest>());
+    expect(find.byType(SizedBox), findsNothing);
+    expect(
+      find.textContaining('Papyrus native WebView embedding is not available'),
+      findsOneWidget,
+    );
   });
 
   test('unsupported snapshot surfaces structured platform error', () async {

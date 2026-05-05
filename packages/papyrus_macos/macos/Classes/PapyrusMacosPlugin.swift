@@ -11,6 +11,10 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
     let instance = PapyrusMacosPlugin()
     instance.channel = channel
     registrar.addMethodCallDelegate(instance, channel: channel)
+    registrar.register(
+      PapyrusMacosViewFactory(plugin: instance),
+      withId: "dev.papyrus.papyrus_macos/webview"
+    )
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -71,7 +75,8 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
     }
   }
 
-  private func createWebView(config: [String: Any]) {
+  @discardableResult
+  fileprivate func createWebView(config: [String: Any]) -> WKWebView {
     let webConfig = WKWebViewConfiguration()
     if config["ephemeral"] as? Bool == true {
       webConfig.websiteDataStore = .nonPersistent()
@@ -87,6 +92,7 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
     view.navigationDelegate = self
     view.uiDelegate = self
     webView = view
+    return view
   }
 
   private func load(request: [String: Any]) {
@@ -126,7 +132,7 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
 
   public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
     channel?.invokeMethod("navigationRequest", arguments: navigationAction.request.url?.absoluteString)
-    decisionHandler(.cancel)
+    decisionHandler(.allow)
   }
 
   private func capabilities() -> [String: Bool] {
@@ -141,5 +147,22 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
       "supportsDownloadInterception": true,
       "supportsPermissionInterception": true,
     ]
+  }
+}
+
+private class PapyrusMacosViewFactory: NSObject, FlutterPlatformViewFactory {
+  private weak var plugin: PapyrusMacosPlugin?
+
+  init(plugin: PapyrusMacosPlugin) {
+    self.plugin = plugin
+  }
+
+  func create(withViewIdentifier viewId: Int64, arguments args: Any?) -> NSView {
+    let config = args as? [String: Any] ?? [:]
+    return plugin?.createWebView(config: config) ?? NSView(frame: .zero)
+  }
+
+  func createArgsCodec() -> (FlutterMessageCodec & NSObjectProtocol)? {
+    FlutterStandardMessageCodec.sharedInstance()
   }
 }

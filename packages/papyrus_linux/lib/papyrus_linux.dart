@@ -12,6 +12,9 @@ class PapyrusLinux extends PapyrusPlatform {
   }
 
   @override
+  bool get supportsNativeView => false;
+
+  @override
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
   }) => _channel.invokeMethod<void>('create');

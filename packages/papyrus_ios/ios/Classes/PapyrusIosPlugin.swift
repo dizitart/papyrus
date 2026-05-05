@@ -11,6 +11,10 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
     let instance = PapyrusIosPlugin()
     instance.channel = channel
     registrar.addMethodCallDelegate(instance, channel: channel)
+    registrar.register(
+      PapyrusIosViewFactory(plugin: instance),
+      withId: "dev.papyrus.papyrus_ios/webview"
+    )
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -70,7 +74,8 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
     }
   }
 
-  private func createWebView(config: [String: Any]) {
+  @discardableResult
+  fileprivate func createWebView(config: [String: Any]) -> WKWebView {
     let webConfig = WKWebViewConfiguration()
     if config["ephemeral"] as? Bool == true {
       webConfig.websiteDataStore = .nonPersistent()
@@ -86,6 +91,7 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
     view.navigationDelegate = self
     view.uiDelegate = self
     webView = view
+    return view
   }
 
   private func load(request: [String: Any]) {
@@ -125,7 +131,7 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
 
   public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
     channel?.invokeMethod("navigationRequest", arguments: navigationAction.request.url?.absoluteString)
-    decisionHandler(.cancel)
+    decisionHandler(.allow)
   }
 
   public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -148,5 +154,40 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
       "supportsDownloadInterception": true,
       "supportsPermissionInterception": true,
     ]
+  }
+}
+
+private class PapyrusIosViewFactory: NSObject, FlutterPlatformViewFactory {
+  private weak var plugin: PapyrusIosPlugin?
+
+  init(plugin: PapyrusIosPlugin) {
+    self.plugin = plugin
+  }
+
+  func create(
+    withFrame frame: CGRect,
+    viewIdentifier viewId: Int64,
+    arguments args: Any?
+  ) -> FlutterPlatformView {
+    let config = args as? [String: Any] ?? [:]
+    let webView = plugin?.createWebView(config: config) ?? WKWebView(frame: frame)
+    webView.frame = frame
+    return PapyrusIosPlatformView(webView: webView)
+  }
+
+  func createArgsCodec() -> FlutterMessageCodec & NSObjectProtocol {
+    FlutterStandardMessageCodec.sharedInstance()
+  }
+}
+
+private class PapyrusIosPlatformView: NSObject, FlutterPlatformView {
+  private let webView: WKWebView
+
+  init(webView: WKWebView) {
+    self.webView = webView
+  }
+
+  func view() -> UIView {
+    webView
   }
 }

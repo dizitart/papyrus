@@ -16,6 +16,9 @@ import android.webkit.WebViewClient
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMessageCodec
+import io.flutter.plugin.platform.PlatformView
+import io.flutter.plugin.platform.PlatformViewFactory
 import java.io.ByteArrayOutputStream
 
 class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
@@ -28,6 +31,10 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         appContext = binding.applicationContext
         channel = MethodChannel(binding.binaryMessenger, "dev.papyrus.papyrus_android")
         channel.setMethodCallHandler(this)
+        binding.platformViewRegistry.registerViewFactory(
+            "dev.papyrus.papyrus_android/webview",
+            PapyrusWebViewFactory(this)
+        )
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -72,8 +79,23 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun createWebView(config: Map<*, *>) {
+    internal fun createWebView(config: Map<*, *>): WebView {
         val view = WebView(appContext)
+        configureWebView(view, config)
+        webView?.destroy()
+        webView = view
+        return view
+    }
+
+    internal fun disposeWebView(view: WebView) {
+        if (webView === view) {
+            webView = null
+        }
+        view.destroy()
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun configureWebView(view: WebView, config: Map<*, *>) {
         val allowJavaScript = config["allowJavaScript"] == true
         view.settings.javaScriptEnabled = allowJavaScript
         view.settings.javaScriptCanOpenWindowsAutomatically = config["allowPopups"] == true
@@ -90,7 +112,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         view.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 channel.invokeMethod("navigationRequest", request.url.toString())
-                return true
+                return false
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -125,8 +147,6 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         view.setDownloadListener(DownloadListener { url, _, _, mimeType, contentLength ->
             channel.invokeMethod("downloadRequest", mapOf("uri" to url, "mimeType" to mimeType, "contentLength" to contentLength))
         })
-        webView?.destroy()
-        webView = view
     }
 
     private fun load(request: Map<*, *>) {
@@ -189,4 +209,24 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         "supportsDownloadInterception" to true,
         "supportsPermissionInterception" to true,
     )
+}
+
+private class PapyrusWebViewFactory(
+    private val plugin: PapyrusAndroidPlugin,
+) : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
+    override fun create(context: Context, viewId: Int, args: Any?): PlatformView {
+        val config = args as? Map<*, *> ?: emptyMap<Any, Any>()
+        return PapyrusPlatformWebView(plugin, plugin.createWebView(config))
+    }
+}
+
+private class PapyrusPlatformWebView(
+    private val plugin: PapyrusAndroidPlugin,
+    private val webView: WebView,
+) : PlatformView {
+    override fun getView() = webView
+
+    override fun dispose() {
+        plugin.disposeWebView(webView)
+    }
 }

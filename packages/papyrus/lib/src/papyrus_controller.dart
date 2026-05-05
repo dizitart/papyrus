@@ -12,6 +12,12 @@ class PapyrusController {
 
   Stream<PapyrusEvent> get events => _platform.events;
 
+  Future<void> initialize({
+    PapyrusConfiguration configuration = const PapyrusConfiguration(),
+  }) {
+    return _platform.create(configuration: configuration);
+  }
+
   Future<void> load(PapyrusLoadRequest request) => _platform.load(request);
 
   Future<void> loadHtmlString(

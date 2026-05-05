@@ -12,6 +12,12 @@ class PapyrusMacos extends PapyrusPlatform {
   }
 
   @override
+  bool get supportsNativeView => true;
+
+  @override
+  String get viewType => 'dev.papyrus.papyrus_macos/webview';
+
+  @override
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
   }) => _channel.invokeMethod<void>('create', _configurationMap(configuration));
