@@ -115,7 +115,12 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
     switch request["type"] as? String {
     case "html":
       let base = (request["baseUri"] as? String).flatMap(URL.init(string:))
-      view.loadHTMLString(request["html"] as? String ?? "", baseURL: base)
+      let html = request["html"] as? String ?? ""
+      if base == nil, let url = htmlDataURL(for: html) {
+        view.load(URLRequest(url: url))
+      } else {
+        view.loadHTMLString(html, baseURL: base)
+      }
     case "uri":
       if let value = request["uri"] as? String, let url = URL(string: value) {
         view.load(URLRequest(url: url))
@@ -155,6 +160,14 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
 
   public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     channel?.invokeMethod("pageFinished", arguments: webView.url?.absoluteString)
+  }
+
+  private func htmlDataURL(for html: String) -> URL? {
+    guard let data = html.data(using: .utf8) else {
+      return nil
+    }
+    let base64 = data.base64EncodedString()
+    return URL(string: "data:text/html;charset=utf-8;base64,\(base64)")
   }
 
   private func capabilities() -> [String: Bool] {

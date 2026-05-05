@@ -66,7 +66,8 @@ class PapyrusAndroid extends PapyrusPlatform {
 
   @override
   Future<double> estimatedProgress() async {
-    return await _channel.invokeMethod<double>('estimatedProgress') ?? 0;
+    final value = await _channel.invokeMethod<num>('estimatedProgress');
+    return value?.toDouble() ?? 0;
   }
 
   @override

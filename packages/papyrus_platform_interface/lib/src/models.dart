@@ -871,30 +871,11 @@ class PapyrusPlatformCapabilities {
 class PapyrusHtmlComposer {
   const PapyrusHtmlComposer._();
 
+  static const _viewportMeta =
+      '<meta name="viewport" content="width=device-width, initial-scale=1">';
+
   static String ensureDocument(String html) {
-    final doctypePattern = RegExp(r'<!doctype\s+html', caseSensitive: false);
-    if (doctypePattern.hasMatch(html)) {
-      return html;
-    }
-
-    final htmlPattern = RegExp(r'<html(\s[^>]*)?>', caseSensitive: false);
-    if (htmlPattern.hasMatch(html)) {
-      return html;
-    }
-
-    final hasHead = RegExp(
-      r'<head(\s[^>]*)?>',
-      caseSensitive: false,
-    ).hasMatch(html);
-    final hasBody = RegExp(
-      r'<body(\s[^>]*)?>',
-      caseSensitive: false,
-    ).hasMatch(html);
-    if (hasHead || hasBody) {
-      return '<!doctype html><html>$html</html>';
-    }
-
-    return '<!doctype html><html><head></head><body>$html</body></html>';
+    return _ensureViewportMeta(_ensureHtmlShell(html));
   }
 
   static String injectContentSecurityPolicy(String html, String policy) {
@@ -924,5 +905,59 @@ class PapyrusHtmlComposer {
         .replaceAll('"', '&quot;')
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;');
+  }
+
+  static String _ensureHtmlShell(String html) {
+    final doctypePattern = RegExp(r'<!doctype\s+html', caseSensitive: false);
+    if (doctypePattern.hasMatch(html)) {
+      return html;
+    }
+
+    final htmlPattern = RegExp(r'<html(\s[^>]*)?>', caseSensitive: false);
+    if (htmlPattern.hasMatch(html)) {
+      return html;
+    }
+
+    final hasHead = RegExp(
+      r'<head(\s[^>]*)?>',
+      caseSensitive: false,
+    ).hasMatch(html);
+    final hasBody = RegExp(
+      r'<body(\s[^>]*)?>',
+      caseSensitive: false,
+    ).hasMatch(html);
+    if (hasHead || hasBody) {
+      return '<!doctype html><html>$html</html>';
+    }
+
+    return '<!doctype html><html><head></head><body>$html</body></html>';
+  }
+
+  static String _ensureViewportMeta(String html) {
+    final viewportPattern = RegExp(
+      "<meta\\s+[^>]*name\\s*=\\s*['\"]viewport['\"][^>]*>",
+      caseSensitive: false,
+    );
+    if (viewportPattern.hasMatch(html)) {
+      return html;
+    }
+
+    final headPattern = RegExp(r'<head(\s[^>]*)?>', caseSensitive: false);
+    final headMatch = headPattern.firstMatch(html);
+    if (headMatch != null) {
+      return html.replaceRange(headMatch.end, headMatch.end, _viewportMeta);
+    }
+
+    final htmlPattern = RegExp(r'<html(\s[^>]*)?>', caseSensitive: false);
+    final htmlMatch = htmlPattern.firstMatch(html);
+    if (htmlMatch != null) {
+      return html.replaceRange(
+        htmlMatch.end,
+        htmlMatch.end,
+        '<head>$_viewportMeta</head>',
+      );
+    }
+
+    return '<!doctype html><html><head>$_viewportMeta</head><body>$html</body></html>';
   }
 }

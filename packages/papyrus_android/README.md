@@ -7,3 +7,6 @@ resource interception, downloads, permissions, console messages, renderer
 process failures, mixed-content behavior, file access, and dark-mode settings to
 Android WebView APIs.
 
+Android uses the native Flutter platform-view path rather than the shared
+desktop overlay model.
+

@@ -28,7 +28,7 @@ void main() {
       expect(request.toMap(), {
         'type': 'html',
         'html':
-            '<!doctype html><html><head></head><body><p>Hello</p></body></html>',
+            '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><p>Hello</p></body></html>',
         'baseUri': 'papyrus-resource://message/1/',
         'metadata': {
           'contentType': 'text/html',
@@ -122,7 +122,14 @@ void main() {
     test('CSP injection is deterministic for fragments and documents', () {
       expect(
         PapyrusHtmlComposer.ensureDocument('<p>Hello</p>'),
-        '<!doctype html><html><head></head><body><p>Hello</p></body></html>',
+        '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><p>Hello</p></body></html>',
+      );
+
+      expect(
+        PapyrusHtmlComposer.ensureDocument(
+          '<html><head><meta name="viewport" content="width=320"></head><body><p>Hello</p></body></html>',
+        ),
+        '<html><head><meta name="viewport" content="width=320"></head><body><p>Hello</p></body></html>',
       );
 
       expect(
@@ -130,7 +137,7 @@ void main() {
           '<p>Hello</p>',
           "default-src 'none'",
         ),
-        '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'"></head><body><p>Hello</p></body></html>',
+        '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><p>Hello</p></body></html>',
       );
 
       expect(
@@ -138,7 +145,7 @@ void main() {
           '<html><head><title>x</title></head><body></body></html>',
           'img-src https:',
         ),
-        '<html><head><meta http-equiv="Content-Security-Policy" content="img-src https:"><title>x</title></head><body></body></html>',
+        '<html><head><meta http-equiv="Content-Security-Policy" content="img-src https:"><meta name="viewport" content="width=device-width, initial-scale=1"><title>x</title></head><body></body></html>',
       );
     });
 

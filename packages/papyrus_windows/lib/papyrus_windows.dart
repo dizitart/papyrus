@@ -74,8 +74,10 @@ class PapyrusWindows extends PapyrusPlatform {
   Future<String?> title() => _channel.invokeMethod<String>('title');
 
   @override
-  Future<double> estimatedProgress() async =>
-      await _channel.invokeMethod<double>('estimatedProgress') ?? 0;
+  Future<double> estimatedProgress() async {
+    final value = await _channel.invokeMethod<num>('estimatedProgress');
+    return value?.toDouble() ?? 0;
+  }
 
   @override
   Future<Object?> evaluateJavaScript(String source) =>
