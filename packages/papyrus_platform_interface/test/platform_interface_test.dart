@@ -68,6 +68,10 @@ void main() {
       expect(config.storage.ephemeral, isTrue);
       expect(config.media.requireUserGesture, isTrue);
       expect(config.resources.remoteResources, PapyrusRemoteResourceMode.block);
+      expect(
+        config.platform.hardwareAcceleration,
+        PapyrusHardwareAccelerationMode.auto,
+      );
     });
 
     test('email profile blocks scripts, storage, and remote resources', () {

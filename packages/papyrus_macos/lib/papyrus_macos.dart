@@ -6,13 +6,19 @@ class PapyrusMacos extends PapyrusPlatform {
     : _channel = channel ?? const MethodChannel('dev.papyrus.papyrus_macos');
 
   final MethodChannel _channel;
+  static const bool _forceDesktopOverlay = bool.fromEnvironment(
+    'PAPYRUS_FORCE_DESKTOP_OVERLAY',
+  );
 
   static void registerWith() {
     PapyrusPlatform.instance = PapyrusMacos();
   }
 
   @override
-  bool get supportsNativeView => true;
+  bool get supportsNativeView => !_forceDesktopOverlay;
+
+  @override
+  bool get supportsOverlaySurface => _forceDesktopOverlay;
 
   @override
   String get viewType => 'dev.papyrus.papyrus_macos/webview';
@@ -21,6 +27,25 @@ class PapyrusMacos extends PapyrusPlatform {
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
   }) => _channel.invokeMethod<void>('create', _configurationMap(configuration));
+
+  @override
+  Future<void> setViewport({
+    required double x,
+    required double y,
+    required double width,
+    required double height,
+    required double devicePixelRatio,
+    required bool visible,
+  }) {
+    return _channel.invokeMethod<void>('setViewport', {
+      'x': x,
+      'y': y,
+      'width': width,
+      'height': height,
+      'devicePixelRatio': devicePixelRatio,
+      'visible': visible,
+    });
+  }
 
   @override
   Future<void> load(PapyrusLoadRequest request) {
@@ -123,6 +148,8 @@ Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
   'ephemeral': configuration.storage.ephemeral,
   'autoHeight': configuration.display.autoHeight,
   'zoomEnabled': configuration.display.zoomEnabled,
+  'desktopOverlay': PapyrusMacos._forceDesktopOverlay,
+  'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
 };
 
 PapyrusPlatformCapabilities? _capabilitiesFromMap(Map<String, Object?>? map) {

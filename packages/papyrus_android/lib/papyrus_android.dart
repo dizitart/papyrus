@@ -141,6 +141,7 @@ Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
   'zoomEnabled': configuration.display.zoomEnabled,
   'textZoom': configuration.display.textZoom,
   'debuggingEnabled': configuration.platform.debuggingEnabled,
+  'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
 };
 
 PapyrusPlatformCapabilities? _capabilitiesFromMap(Map<String, Object?>? map) {

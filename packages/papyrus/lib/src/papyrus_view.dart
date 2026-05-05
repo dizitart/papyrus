@@ -66,11 +66,7 @@ class _PapyrusViewState extends State<PapyrusView> {
     widget.onCreated?.call(widget.controller);
     _subscription = widget.controller.events.listen(_handleEvent);
     if (_usesMethodChannelSurface) {
-      _nativeViewCreated = true;
-      unawaited(
-        widget.controller.initialize(configuration: widget.configuration),
-      );
-      _loadInitialRequest();
+      _initializeMethodChannelSurface();
     }
   }
 
@@ -84,10 +80,7 @@ class _PapyrusViewState extends State<PapyrusView> {
       _initialLoadStarted = false;
       _nativeViewCreated = _usesMethodChannelSurface;
       if (_nativeViewCreated) {
-        unawaited(
-          widget.controller.initialize(configuration: widget.configuration),
-        );
-        _loadInitialRequest();
+        _initializeMethodChannelSurface();
       }
     }
   }
@@ -112,6 +105,18 @@ class _PapyrusViewState extends State<PapyrusView> {
   @override
   void dispose() {
     _subscription?.cancel();
+    if (PapyrusPlatform.instance.supportsOverlaySurface) {
+      unawaited(
+        widget.controller.setViewport(
+          x: 0,
+          y: 0,
+          width: 0,
+          height: 0,
+          devicePixelRatio: 1,
+          visible: false,
+        ),
+      );
+    }
     super.dispose();
   }
 
@@ -166,6 +171,17 @@ class _PapyrusViewState extends State<PapyrusView> {
     _loadInitialRequest();
   }
 
+  void _initializeMethodChannelSurface() {
+    _nativeViewCreated = true;
+    final controller = widget.controller;
+    unawaited(
+      controller.initialize(configuration: widget.configuration).then((_) {
+        if (!mounted || widget.controller != controller) return;
+        _loadInitialRequest();
+      }),
+    );
+  }
+
   void _loadInitialRequest() {
     if (!_nativeViewCreated || _initialLoadStarted) return;
     final request = widget.initialRequest;
@@ -194,6 +210,7 @@ class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
   final GlobalKey _key = GlobalKey();
   late final Ticker _ticker;
   _ViewportSnapshot? _lastSent;
+  bool _syncScheduled = false;
 
   @override
   void initState() {
@@ -243,10 +260,13 @@ class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
   }
 
   void _scheduleViewportSync() {
+    if (_syncScheduled) return;
+    _syncScheduled = true;
     SchedulerBinding.instance.addPostFrameCallback((_) => _syncViewport());
   }
 
   void _syncViewport() {
+    _syncScheduled = false;
     if (!mounted) return;
     final context = _key.currentContext;
     if (context == null) return;
@@ -258,10 +278,10 @@ class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
     final devicePixelRatio = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1;
     final visible = size.width > 0 && size.height > 0;
     final snapshot = _ViewportSnapshot(
-      x: offset.dx,
-      y: offset.dy,
-      width: size.width,
-      height: size.height,
+      x: _snapToPhysicalPixel(offset.dx, devicePixelRatio),
+      y: _snapToPhysicalPixel(offset.dy, devicePixelRatio),
+      width: _snapToPhysicalPixel(size.width, devicePixelRatio),
+      height: _snapToPhysicalPixel(size.height, devicePixelRatio),
       devicePixelRatio: devicePixelRatio,
       visible: visible,
     );
@@ -278,6 +298,10 @@ class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
       ),
     );
   }
+}
+
+double _snapToPhysicalPixel(double value, double devicePixelRatio) {
+  return (value * devicePixelRatio).roundToDouble() / devicePixelRatio;
 }
 
 @immutable
@@ -350,4 +374,5 @@ Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
   'zoomEnabled': configuration.display.zoomEnabled,
   'textZoom': configuration.display.textZoom,
   'debuggingEnabled': configuration.platform.debuggingEnabled,
+  'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
 };

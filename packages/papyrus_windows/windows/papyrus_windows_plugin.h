@@ -12,6 +12,7 @@
 struct ICoreWebView2;
 struct ICoreWebView2Controller;
 struct ICoreWebView2Environment;
+struct ICoreWebView2EnvironmentOptions;
 
 namespace papyrus_windows {
 
@@ -39,6 +40,8 @@ class PapyrusWindowsPlugin : public flutter::Plugin {
   bool created_ = false;
   bool creating_ = false;
   bool visible_ = false;
+  bool force_software_rendering_ = false;
+  bool software_fallback_attempted_ = false;
   RECT bounds_ = {};
   HWND hwnd_ = nullptr;
   flutter::PluginRegistrarWindows* registrar_ = nullptr;
@@ -49,6 +52,7 @@ class PapyrusWindowsPlugin : public flutter::Plugin {
   std::string title_;
   double progress_ = 0.0;
   Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment_;
+  Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions> environment_options_;
   Microsoft::WRL::ComPtr<ICoreWebView2Controller> controller_;
   Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
 
@@ -57,6 +61,8 @@ class PapyrusWindowsPlugin : public flutter::Plugin {
   void ApplySettings();
   void ApplyBounds();
   void RunPendingLoad();
+  bool RetryWithSoftwareFallback();
+  flutter::EncodableValue DebugOverlayState() const;
   void LoadRequest(const flutter::EncodableMap& request);
   void SetViewport(const flutter::EncodableMap& args);
   std::optional<LRESULT> HandleWindowProc(HWND hwnd,

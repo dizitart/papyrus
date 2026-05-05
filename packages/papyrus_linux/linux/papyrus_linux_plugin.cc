@@ -19,6 +19,11 @@ struct _PapyrusLinuxPlugin {
   GtkWidget* overlay;
   GtkWidget* fixed;
   WebKitWebView* web_view;
+  gboolean visible;
+  double last_x;
+  double last_y;
+  double last_width;
+  double last_height;
 };
 
 G_DEFINE_TYPE(PapyrusLinuxPlugin, papyrus_linux_plugin, g_object_get_type())
@@ -45,6 +50,13 @@ static const gchar* fl_value_lookup_string_or_null(FlValue* map,
     return nullptr;
   }
   return fl_value_get_string(value);
+}
+
+static gboolean fl_value_lookup_string_equals(FlValue* map,
+                                              const gchar* key,
+                                              const gchar* expected) {
+  const gchar* value = fl_value_lookup_string_or_null(map, key);
+  return value != nullptr && strcmp(value, expected) == 0;
 }
 
 static double fl_value_lookup_double(FlValue* map, const gchar* key,
@@ -105,6 +117,15 @@ static void ensure_web_view(PapyrusLinuxPlugin* self, FlValue* config) {
   webkit_settings_set_enable_write_console_messages_to_stdout(settings, FALSE);
   webkit_settings_set_enable_developer_extras(
       settings, fl_value_lookup_bool(config, "debuggingEnabled", FALSE));
+  if (fl_value_lookup_string_equals(config, "hardwareAcceleration",
+                                    "software")) {
+    webkit_settings_set_hardware_acceleration_policy(
+        settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
+  } else if (fl_value_lookup_string_equals(config, "hardwareAcceleration",
+                                           "hardware")) {
+    webkit_settings_set_hardware_acceleration_policy(
+        settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS);
+  }
 
   WebKitUserContentManager* content_manager = webkit_user_content_manager_new();
   self->web_view = WEBKIT_WEB_VIEW(g_object_new(
@@ -160,6 +181,11 @@ static void set_viewport(PapyrusLinuxPlugin* self, FlValue* args) {
   const double y = fl_value_lookup_double(args, "y", 0);
   const double width = fl_value_lookup_double(args, "width", 0);
   const double height = fl_value_lookup_double(args, "height", 0);
+  self->visible = visible && width > 0 && height > 0;
+  self->last_x = x;
+  self->last_y = y;
+  self->last_width = width;
+  self->last_height = height;
 
   GtkWidget* widget = GTK_WIDGET(self->web_view);
   gtk_fixed_move(GTK_FIXED(self->fixed), widget, static_cast<gint>(x),
@@ -167,11 +193,29 @@ static void set_viewport(PapyrusLinuxPlugin* self, FlValue* args) {
   gtk_widget_set_size_request(widget, static_cast<gint>(width),
                               static_cast<gint>(height));
 
-  if (visible && width > 0 && height > 0) {
+  if (self->visible) {
     gtk_widget_show(widget);
   } else {
     gtk_widget_hide(widget);
   }
+}
+
+static FlMethodResponse* debug_overlay_state_response(
+    PapyrusLinuxPlugin* self) {
+  g_autoptr(FlValue) result = fl_value_new_map();
+  fl_value_set_string_take(result, "overlayAttached",
+                           fl_value_new_bool(self->overlay != nullptr));
+  fl_value_set_string_take(result, "webViewAttached",
+                           fl_value_new_bool(self->web_view != nullptr));
+  fl_value_set_string_take(result, "visible",
+                           fl_value_new_bool(self->visible));
+  fl_value_set_string_take(result, "x", fl_value_new_float(self->last_x));
+  fl_value_set_string_take(result, "y", fl_value_new_float(self->last_y));
+  fl_value_set_string_take(result, "width",
+                           fl_value_new_float(self->last_width));
+  fl_value_set_string_take(result, "height",
+                           fl_value_new_float(self->last_height));
+  return FL_METHOD_RESPONSE(fl_method_success_response_new(result));
 }
 
 static void load_request(PapyrusLinuxPlugin* self, FlValue* request) {
@@ -234,6 +278,8 @@ static void papyrus_linux_plugin_handle_method_call(
   } else if (strcmp(method, "setViewport") == 0) {
     set_viewport(self, args);
     response = success_null();
+  } else if (strcmp(method, "debugOverlayState") == 0) {
+    response = debug_overlay_state_response(self);
   } else if (strcmp(method, "load") == 0) {
     load_request(self, args);
     response = success_null();
@@ -298,6 +344,9 @@ static void papyrus_linux_plugin_handle_method_call(
     if (strcmp(method, "dispose") == 0 && self->web_view != nullptr) {
       gtk_widget_destroy(GTK_WIDGET(self->web_view));
       self->web_view = nullptr;
+      self->visible = FALSE;
+      self->last_width = 0;
+      self->last_height = 0;
     }
     response = success_null();
   } else if (strcmp(method, "getCapabilities") == 0) {
@@ -322,6 +371,7 @@ static void papyrus_linux_plugin_dispose(GObject* object) {
   if (self->web_view != nullptr) {
     gtk_widget_destroy(GTK_WIDGET(self->web_view));
     self->web_view = nullptr;
+    self->visible = FALSE;
   }
   if (self->flutter_view != nullptr) {
     g_object_unref(self->flutter_view);
@@ -339,6 +389,11 @@ static void papyrus_linux_plugin_init(PapyrusLinuxPlugin* self) {
   self->overlay = nullptr;
   self->fixed = nullptr;
   self->web_view = nullptr;
+  self->visible = FALSE;
+  self->last_x = 0;
+  self->last_y = 0;
+  self->last_width = 0;
+  self->last_height = 0;
 }
 
 static void method_call_cb(FlMethodChannel* channel, FlMethodCall* method_call,

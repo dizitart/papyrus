@@ -4,12 +4,15 @@ import WebKit
 
 public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WKUIDelegate {
   private var channel: FlutterMethodChannel?
+  private weak var flutterView: NSView?
+  private var overlayContainer: NSView?
   private var webView: WKWebView?
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "dev.papyrus.papyrus_macos", binaryMessenger: registrar.messenger)
     let instance = PapyrusMacosPlugin()
     instance.channel = channel
+    instance.flutterView = registrar.view
     registrar.addMethodCallDelegate(instance, channel: channel)
     registrar.register(
       PapyrusMacosViewFactory(plugin: instance),
@@ -22,6 +25,11 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
     case "create":
       createWebView(config: call.arguments as? [String: Any] ?? [:])
       result(nil)
+    case "setViewport":
+      setViewport(call.arguments as? [String: Any] ?? [:])
+      result(nil)
+    case "debugOverlayState":
+      result(debugOverlayState())
     case "load":
       load(request: call.arguments as? [String: Any] ?? [:])
       result(nil)
@@ -66,7 +74,10 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
       WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: Date(timeIntervalSince1970: 0)) {}
       result(nil)
     case "dispose":
+      webView?.removeFromSuperview()
       webView = nil
+      overlayContainer?.removeFromSuperview()
+      overlayContainer = nil
       result(nil)
     case "getCapabilities":
       result(capabilities())
@@ -92,7 +103,55 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
     view.navigationDelegate = self
     view.uiDelegate = self
     webView = view
+    if config["desktopOverlay"] as? Bool == true {
+      attachOverlayWebView(view)
+    }
     return view
+  }
+
+  private func attachOverlayWebView(_ view: WKWebView) {
+    guard let flutterView else { return }
+    let container = overlayContainer ?? PapyrusMacosOverlayContainer(frame: flutterView.bounds)
+    container.autoresizingMask = [.width, .height]
+    container.wantsLayer = true
+    container.layer?.backgroundColor = NSColor.clear.cgColor
+    if container.superview == nil {
+      flutterView.addSubview(container, positioned: .above, relativeTo: nil)
+    }
+    overlayContainer = container
+    if view.superview !== container {
+      view.removeFromSuperview()
+      container.addSubview(view)
+    }
+    view.isHidden = true
+  }
+
+  private func setViewport(_ args: [String: Any]) {
+    guard let view = webView, let flutterView else { return }
+    if overlayContainer == nil || view.superview == nil {
+      attachOverlayWebView(view)
+    }
+    overlayContainer?.frame = flutterView.bounds
+    let x = cgFloat(args["x"])
+    let y = cgFloat(args["y"])
+    let width = cgFloat(args["width"])
+    let height = cgFloat(args["height"])
+    let visible = args["visible"] as? Bool ?? false
+    view.frame = CGRect(x: x, y: y, width: width, height: height)
+    view.isHidden = !visible || width <= 0 || height <= 0
+  }
+
+  private func debugOverlayState() -> [String: Any] {
+    let frame = webView?.frame ?? .zero
+    return [
+      "overlayAttached": overlayContainer?.superview != nil,
+      "webViewAttached": webView?.superview != nil,
+      "visible": webView?.isHidden == false,
+      "x": Double(frame.origin.x),
+      "y": Double(frame.origin.y),
+      "width": Double(frame.width),
+      "height": Double(frame.height),
+    ]
   }
 
   private func load(request: [String: Any]) {
@@ -121,13 +180,35 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
       result(FlutterStandardTypedData(bytes: Data()))
       return
     }
-    view.takeSnapshot(with: nil) { image, error in
-      if let error = error {
+    let configuration = WKSnapshotConfiguration()
+    configuration.rect = view.bounds
+    configuration.snapshotWidth = NSNumber(value: Double(view.bounds.width))
+    view.takeSnapshot(with: configuration) { [weak self] image, error in
+      if let image, let data = self?.pngData(from: image), !data.isEmpty {
+        result(FlutterStandardTypedData(bytes: data))
+      } else if let data = self?.rasterSnapshotData(from: view), !data.isEmpty {
+        result(FlutterStandardTypedData(bytes: data))
+      } else if let error = error {
         result(FlutterError(code: "papyrus_macos", message: error.localizedDescription, details: nil))
       } else {
-        result(FlutterStandardTypedData(bytes: image?.tiffRepresentation ?? Data()))
+        result(FlutterStandardTypedData(bytes: Data()))
       }
     }
+  }
+
+  private func pngData(from image: NSImage) -> Data? {
+    guard let tiff = image.tiffRepresentation else { return nil }
+    guard let representation = NSBitmapImageRep(data: tiff) else { return tiff }
+    return representation.representation(using: .png, properties: [:])
+  }
+
+  private func rasterSnapshotData(from view: NSView) -> Data? {
+    guard view.bounds.width > 0, view.bounds.height > 0 else { return nil }
+    guard let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+      return nil
+    }
+    view.cacheDisplay(in: view.bounds, to: representation)
+    return representation.representation(using: .png, properties: [:])
   }
 
   public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -148,6 +229,18 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
       "supportsPermissionInterception": true,
     ]
   }
+}
+
+private func cgFloat(_ value: Any?) -> CGFloat {
+  if let value = value as? CGFloat { return value }
+  if let value = value as? Double { return CGFloat(value) }
+  if let value = value as? Int { return CGFloat(value) }
+  if let value = value as? NSNumber { return CGFloat(truncating: value) }
+  return 0
+}
+
+private class PapyrusMacosOverlayContainer: NSView {
+  override var isFlipped: Bool { true }
 }
 
 private class PapyrusMacosViewFactory: NSObject, FlutterPlatformViewFactory {

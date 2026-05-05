@@ -123,6 +123,7 @@ Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
   'ephemeral': configuration.storage.ephemeral,
   'autoHeight': configuration.display.autoHeight,
   'zoomEnabled': configuration.display.zoomEnabled,
+  'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
 };
 
 PapyrusPlatformCapabilities? _capabilitiesFromMap(Map<String, Object?>? map) {

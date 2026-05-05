@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <WebView2.h>
+#include <WebView2EnvironmentOptions.h>
 
 #include <flutter/method_channel.h>
 #include <flutter/plugin_registrar_windows.h>
@@ -171,18 +172,44 @@ bool PapyrusWindowsPlugin::DetectWebView2Runtime() {
   return SUCCEEDED(result);
 }
 
+bool PapyrusWindowsPlugin::RetryWithSoftwareFallback() {
+  const std::string hardware_mode =
+      StringFromValue(configuration_, "hardwareAcceleration");
+  if (hardware_mode == "hardware" || hardware_mode == "software" ||
+      software_fallback_attempted_) {
+    return false;
+  }
+  software_fallback_attempted_ = true;
+  force_software_rendering_ = true;
+  EnsureWebView();
+  return true;
+}
+
 void PapyrusWindowsPlugin::EnsureWebView() {
   if (!webview2_available_ || webview_ || creating_ || hwnd_ == nullptr) {
     return;
   }
   creating_ = true;
+  ICoreWebView2EnvironmentOptions* environment_options_ptr = nullptr;
+  environment_options_.Reset();
+  if (StringFromValue(configuration_, "hardwareAcceleration") == "software" ||
+      force_software_rendering_) {
+    environment_options_ =
+        Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
+    environment_options_->put_AdditionalBrowserArguments(L"--disable-gpu");
+    environment_options_ptr = environment_options_.Get();
+  }
   HRESULT result = CreateCoreWebView2EnvironmentWithOptions(
-      nullptr, nullptr, nullptr,
+      nullptr, nullptr, environment_options_ptr,
       Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
           [this](HRESULT result, ICoreWebView2Environment* environment)
               -> HRESULT {
             creating_ = false;
+            environment_options_.Reset();
             if (FAILED(result) || environment == nullptr) {
+              if (RetryWithSoftwareFallback()) {
+                return S_OK;
+              }
               webview2_available_ = false;
               return S_OK;
             }
@@ -193,6 +220,10 @@ void PapyrusWindowsPlugin::EnsureWebView() {
                     [this](HRESULT result, ICoreWebView2Controller* controller)
                         -> HRESULT {
                       if (FAILED(result) || controller == nullptr) {
+                        environment_.Reset();
+                        if (RetryWithSoftwareFallback()) {
+                          return S_OK;
+                        }
                         webview2_available_ = false;
                         return S_OK;
                       }
@@ -209,6 +240,10 @@ void PapyrusWindowsPlugin::EnsureWebView() {
           .Get());
   if (FAILED(result)) {
     creating_ = false;
+    environment_options_.Reset();
+    if (RetryWithSoftwareFallback()) {
+      return;
+    }
     webview2_available_ = false;
   }
 }
@@ -247,6 +282,28 @@ void PapyrusWindowsPlugin::RunPendingLoad() {
   }
   LoadRequest(pending_load_);
   pending_load_.clear();
+}
+
+flutter::EncodableValue PapyrusWindowsPlugin::DebugOverlayState() const {
+  return flutter::EncodableMap{
+      {flutter::EncodableValue("overlayAttached"),
+       flutter::EncodableValue(controller_ != nullptr)},
+      {flutter::EncodableValue("webViewAttached"),
+       flutter::EncodableValue(webview_ != nullptr)},
+      {flutter::EncodableValue("visible"), flutter::EncodableValue(visible_)},
+      {flutter::EncodableValue("softwareRendering"),
+       flutter::EncodableValue(force_software_rendering_)},
+      {flutter::EncodableValue("x"),
+       flutter::EncodableValue(static_cast<double>(bounds_.left))},
+      {flutter::EncodableValue("y"),
+       flutter::EncodableValue(static_cast<double>(bounds_.top))},
+      {flutter::EncodableValue("width"),
+       flutter::EncodableValue(
+           static_cast<double>(bounds_.right - bounds_.left))},
+      {flutter::EncodableValue("height"),
+       flutter::EncodableValue(
+           static_cast<double>(bounds_.bottom - bounds_.top))},
+  };
 }
 
 void PapyrusWindowsPlugin::LoadRequest(
@@ -320,6 +377,9 @@ void PapyrusWindowsPlugin::HandleMethodCall(
     if (args != nullptr) {
       configuration_ = *args;
     }
+    software_fallback_attempted_ = false;
+    force_software_rendering_ =
+        StringFromValue(configuration_, "hardwareAcceleration") == "software";
     created_ = true;
     EnsureWebView();
     result->Success();
@@ -405,6 +465,8 @@ void PapyrusWindowsPlugin::HandleMethodCall(
     }
     created_ = false;
     visible_ = false;
+    force_software_rendering_ = false;
+    software_fallback_attempted_ = false;
     current_uri_.clear();
     title_.clear();
     progress_ = 0.0;
@@ -442,6 +504,8 @@ void PapyrusWindowsPlugin::HandleMethodCall(
         {flutter::EncodableValue("height"),
          flutter::EncodableValue(created_ ? 1.0 : 0.0)},
     });
+  } else if (method == "debugOverlayState") {
+    result->Success(DebugOverlayState());
   } else if (method == "captureSnapshot") {
     if (!webview2_available_) {
       UnsupportedWebView2(std::move(result));

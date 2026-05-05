@@ -65,6 +65,8 @@ enum PapyrusErrorCode {
 
 enum PapyrusDarkMode { system, light, dark }
 
+enum PapyrusHardwareAccelerationMode { auto, hardware, software }
+
 class PapyrusException implements Exception {
   const PapyrusException(this.code, this.message, {this.uri});
 
@@ -585,9 +587,13 @@ class PapyrusAccessibilityPolicy {
 }
 
 class PapyrusPlatformOptions {
-  const PapyrusPlatformOptions({this.debuggingEnabled = false});
+  const PapyrusPlatformOptions({
+    this.debuggingEnabled = false,
+    this.hardwareAcceleration = PapyrusHardwareAccelerationMode.auto,
+  });
 
   final bool debuggingEnabled;
+  final PapyrusHardwareAccelerationMode hardwareAcceleration;
 }
 
 class PapyrusVirtualResource {
