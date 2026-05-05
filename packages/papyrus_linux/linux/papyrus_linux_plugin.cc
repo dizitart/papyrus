@@ -15,6 +15,9 @@
 
 struct _PapyrusLinuxPlugin {
   GObject parent_instance;
+  FlView* flutter_view;
+  GtkWidget* overlay;
+  GtkWidget* fixed;
   WebKitWebView* web_view;
 };
 
@@ -44,10 +47,56 @@ static const gchar* fl_value_lookup_string_or_null(FlValue* map,
   return fl_value_get_string(value);
 }
 
+static double fl_value_lookup_double(FlValue* map, const gchar* key,
+                                     double fallback) {
+  if (map == nullptr || fl_value_get_type(map) != FL_VALUE_TYPE_MAP) {
+    return fallback;
+  }
+  FlValue* value = fl_value_lookup_string(map, key);
+  if (value == nullptr) {
+    return fallback;
+  }
+  if (fl_value_get_type(value) == FL_VALUE_TYPE_FLOAT) {
+    return fl_value_get_float(value);
+  }
+  if (fl_value_get_type(value) == FL_VALUE_TYPE_INT) {
+    return static_cast<double>(fl_value_get_int(value));
+  }
+  return fallback;
+}
+
+static void ensure_overlay_container(PapyrusLinuxPlugin* self) {
+  if (self->overlay != nullptr || self->flutter_view == nullptr) {
+    return;
+  }
+
+  GtkWidget* flutter_widget = GTK_WIDGET(self->flutter_view);
+  GtkWidget* parent = gtk_widget_get_parent(flutter_widget);
+  if (parent == nullptr || !GTK_IS_CONTAINER(parent)) {
+    return;
+  }
+
+  self->overlay = gtk_overlay_new();
+  gtk_widget_show(self->overlay);
+
+  g_object_ref(flutter_widget);
+  gtk_container_remove(GTK_CONTAINER(parent), flutter_widget);
+  gtk_container_add(GTK_CONTAINER(parent), self->overlay);
+  gtk_container_add(GTK_CONTAINER(self->overlay), flutter_widget);
+  g_object_unref(flutter_widget);
+
+  self->fixed = gtk_fixed_new();
+  gtk_widget_set_halign(self->fixed, GTK_ALIGN_START);
+  gtk_widget_set_valign(self->fixed, GTK_ALIGN_START);
+  gtk_widget_show(self->fixed);
+  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->fixed);
+}
+
 static void ensure_web_view(PapyrusLinuxPlugin* self, FlValue* config) {
   if (self->web_view != nullptr) {
     return;
   }
+  ensure_overlay_container(self);
   WebKitSettings* settings = webkit_settings_new();
   webkit_settings_set_enable_javascript(
       settings, fl_value_lookup_bool(config, "allowJavaScript", FALSE));
@@ -63,6 +112,11 @@ static void ensure_web_view(PapyrusLinuxPlugin* self, FlValue* config) {
       content_manager, nullptr));
   g_object_unref(settings);
   g_object_unref(content_manager);
+
+  if (self->fixed != nullptr) {
+    gtk_container_add(GTK_CONTAINER(self->fixed), GTK_WIDGET(self->web_view));
+    gtk_widget_hide(GTK_WIDGET(self->web_view));
+  }
 }
 
 static FlMethodResponse* success_null() {
@@ -93,6 +147,31 @@ static FlMethodResponse* capabilities_response() {
   fl_value_set_string_take(result, "supportsPermissionInterception",
                            fl_value_new_bool(TRUE));
   return FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+}
+
+static void set_viewport(PapyrusLinuxPlugin* self, FlValue* args) {
+  ensure_web_view(self, nullptr);
+  if (self->web_view == nullptr || self->fixed == nullptr) {
+    return;
+  }
+
+  const gboolean visible = fl_value_lookup_bool(args, "visible", FALSE);
+  const double x = fl_value_lookup_double(args, "x", 0);
+  const double y = fl_value_lookup_double(args, "y", 0);
+  const double width = fl_value_lookup_double(args, "width", 0);
+  const double height = fl_value_lookup_double(args, "height", 0);
+
+  GtkWidget* widget = GTK_WIDGET(self->web_view);
+  gtk_fixed_move(GTK_FIXED(self->fixed), widget, static_cast<gint>(x),
+                 static_cast<gint>(y));
+  gtk_widget_set_size_request(widget, static_cast<gint>(width),
+                              static_cast<gint>(height));
+
+  if (visible && width > 0 && height > 0) {
+    gtk_widget_show(widget);
+  } else {
+    gtk_widget_hide(widget);
+  }
 }
 
 static void load_request(PapyrusLinuxPlugin* self, FlValue* request) {
@@ -151,6 +230,9 @@ static void papyrus_linux_plugin_handle_method_call(
 
   if (strcmp(method, "create") == 0) {
     ensure_web_view(self, args);
+    response = success_null();
+  } else if (strcmp(method, "setViewport") == 0) {
+    set_viewport(self, args);
     response = success_null();
   } else if (strcmp(method, "load") == 0) {
     load_request(self, args);
@@ -214,7 +296,7 @@ static void papyrus_linux_plugin_handle_method_call(
              strcmp(method, "clearStorage") == 0 ||
              strcmp(method, "dispose") == 0) {
     if (strcmp(method, "dispose") == 0 && self->web_view != nullptr) {
-      g_object_unref(self->web_view);
+      gtk_widget_destroy(GTK_WIDGET(self->web_view));
       self->web_view = nullptr;
     }
     response = success_null();
@@ -238,8 +320,12 @@ FlMethodResponse* get_platform_version() {
 static void papyrus_linux_plugin_dispose(GObject* object) {
   PapyrusLinuxPlugin* self = PAPYRUS_LINUX_PLUGIN(object);
   if (self->web_view != nullptr) {
-    g_object_unref(self->web_view);
+    gtk_widget_destroy(GTK_WIDGET(self->web_view));
     self->web_view = nullptr;
+  }
+  if (self->flutter_view != nullptr) {
+    g_object_unref(self->flutter_view);
+    self->flutter_view = nullptr;
   }
   G_OBJECT_CLASS(papyrus_linux_plugin_parent_class)->dispose(object);
 }
@@ -249,6 +335,9 @@ static void papyrus_linux_plugin_class_init(PapyrusLinuxPluginClass* klass) {
 }
 
 static void papyrus_linux_plugin_init(PapyrusLinuxPlugin* self) {
+  self->flutter_view = nullptr;
+  self->overlay = nullptr;
+  self->fixed = nullptr;
   self->web_view = nullptr;
 }
 
@@ -261,6 +350,10 @@ static void method_call_cb(FlMethodChannel* channel, FlMethodCall* method_call,
 void papyrus_linux_plugin_register_with_registrar(FlPluginRegistrar* registrar) {
   PapyrusLinuxPlugin* plugin = PAPYRUS_LINUX_PLUGIN(
       g_object_new(papyrus_linux_plugin_get_type(), nullptr));
+  FlView* view = fl_plugin_registrar_get_view(registrar);
+  if (view != nullptr) {
+    plugin->flutter_view = FL_VIEW(g_object_ref(view));
+  }
 
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
   g_autoptr(FlMethodChannel) channel = fl_method_channel_new(

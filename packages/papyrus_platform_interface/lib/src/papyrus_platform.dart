@@ -18,10 +18,21 @@ abstract class PapyrusPlatform {
 
   bool get supportsNativeView => false;
 
+  bool get supportsOverlaySurface => false;
+
   String? get viewType => null;
 
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
+  }) async {}
+
+  Future<void> setViewport({
+    required double x,
+    required double y,
+    required double width,
+    required double height,
+    required double devicePixelRatio,
+    required bool visible,
   }) async {}
 
   Future<void> load(PapyrusLoadRequest request) async {

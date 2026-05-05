@@ -3,9 +3,15 @@
 
 #include <flutter/method_channel.h>
 #include <flutter/plugin_registrar_windows.h>
+#include <wrl.h>
 
 #include <memory>
+#include <optional>
 #include <string>
+
+struct ICoreWebView2;
+struct ICoreWebView2Controller;
+struct ICoreWebView2Environment;
 
 namespace papyrus_windows {
 
@@ -14,6 +20,8 @@ class PapyrusWindowsPlugin : public flutter::Plugin {
   static void RegisterWithRegistrar(flutter::PluginRegistrarWindows *registrar);
 
   PapyrusWindowsPlugin();
+
+  explicit PapyrusWindowsPlugin(flutter::PluginRegistrarWindows* registrar);
 
   virtual ~PapyrusWindowsPlugin();
 
@@ -29,11 +37,32 @@ class PapyrusWindowsPlugin : public flutter::Plugin {
  private:
   bool webview2_available_ = false;
   bool created_ = false;
+  bool creating_ = false;
+  bool visible_ = false;
+  RECT bounds_ = {};
+  HWND hwnd_ = nullptr;
+  flutter::PluginRegistrarWindows* registrar_ = nullptr;
+  int window_proc_delegate_id_ = 0;
+  flutter::EncodableMap configuration_;
+  flutter::EncodableMap pending_load_;
   std::string current_uri_;
   std::string title_;
   double progress_ = 0.0;
+  Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment_;
+  Microsoft::WRL::ComPtr<ICoreWebView2Controller> controller_;
+  Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
 
   bool DetectWebView2Runtime();
+  void EnsureWebView();
+  void ApplySettings();
+  void ApplyBounds();
+  void RunPendingLoad();
+  void LoadRequest(const flutter::EncodableMap& request);
+  void SetViewport(const flutter::EncodableMap& args);
+  std::optional<LRESULT> HandleWindowProc(HWND hwnd,
+                                          UINT message,
+                                          WPARAM wparam,
+                                          LPARAM lparam);
 };
 
 }  // namespace papyrus_windows

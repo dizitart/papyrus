@@ -12,12 +12,31 @@ class PapyrusWindows extends PapyrusPlatform {
   }
 
   @override
-  bool get supportsNativeView => false;
+  bool get supportsOverlaySurface => true;
 
   @override
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
-  }) => _channel.invokeMethod<void>('create');
+  }) => _channel.invokeMethod<void>('create', _configurationMap(configuration));
+
+  @override
+  Future<void> setViewport({
+    required double x,
+    required double y,
+    required double width,
+    required double height,
+    required double devicePixelRatio,
+    required bool visible,
+  }) {
+    return _channel.invokeMethod<void>('setViewport', {
+      'x': x,
+      'y': y,
+      'width': width,
+      'height': height,
+      'devicePixelRatio': devicePixelRatio,
+      'visible': visible,
+    });
+  }
 
   @override
   Future<void> load(PapyrusLoadRequest request) {
@@ -112,6 +131,19 @@ class PapyrusWindows extends PapyrusPlatform {
         );
   }
 }
+
+Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
+  'allowJavaScript':
+      configuration.security.allowJavaScript ||
+      configuration.javascript.mode != PapyrusJavaScriptMode.disabled,
+  'allowFileAccess': configuration.security.allowFileAccess,
+  'allowPopups': configuration.security.allowPopups,
+  'allowMixedContent': configuration.security.allowMixedContent,
+  'ephemeral': configuration.storage.ephemeral,
+  'autoHeight': configuration.display.autoHeight,
+  'zoomEnabled': configuration.display.zoomEnabled,
+  'debuggingEnabled': configuration.platform.debuggingEnabled,
+};
 
 PapyrusPlatformCapabilities? _capabilitiesFromMap(Map<String, Object?>? map) {
   if (map == null) return null;

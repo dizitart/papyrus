@@ -84,10 +84,11 @@ void main() {
     expect(macos, contains('WKWebView'));
     expect(macos, contains('dev.papyrus.papyrus_macos'));
     expect(windows, contains('dev.papyrus.papyrus_windows'));
-    expect(windows, contains('WebView2Loader.dll'));
+    expect(windows, contains('CreateCoreWebView2EnvironmentWithOptions'));
     expect(windows, contains('getCapabilities'));
     expect(linux, contains('dev.papyrus.papyrus_linux'));
     expect(linux, contains('webkit_web_view_load_html'));
+    expect(linux, contains('gtk_overlay_add_overlay'));
     expect(linux, contains('getCapabilities'));
   });
 

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:papyrus_platform_interface/papyrus_platform_interface.dart';
 
 import 'papyrus_controller.dart';
@@ -64,7 +65,7 @@ class _PapyrusViewState extends State<PapyrusView> {
     super.initState();
     widget.onCreated?.call(widget.controller);
     _subscription = widget.controller.events.listen(_handleEvent);
-    if (!PapyrusPlatform.instance.supportsNativeView) {
+    if (_usesMethodChannelSurface) {
       _nativeViewCreated = true;
       unawaited(
         widget.controller.initialize(configuration: widget.configuration),
@@ -81,7 +82,7 @@ class _PapyrusViewState extends State<PapyrusView> {
       _subscription = widget.controller.events.listen(_handleEvent);
       widget.onCreated?.call(widget.controller);
       _initialLoadStarted = false;
-      _nativeViewCreated = !PapyrusPlatform.instance.supportsNativeView;
+      _nativeViewCreated = _usesMethodChannelSurface;
       if (_nativeViewCreated) {
         unawaited(
           widget.controller.initialize(configuration: widget.configuration),
@@ -117,6 +118,10 @@ class _PapyrusViewState extends State<PapyrusView> {
   @override
   Widget build(BuildContext context) {
     final platform = PapyrusPlatform.instance;
+    if (platform.supportsOverlaySurface) {
+      return _DesktopOverlaySurface(controller: widget.controller);
+    }
+
     final viewType = platform.viewType;
     if (!platform.supportsNativeView || viewType == null) {
       return const _UnsupportedNativeView();
@@ -168,6 +173,145 @@ class _PapyrusViewState extends State<PapyrusView> {
     _initialLoadStarted = true;
     unawaited(widget.controller.load(request));
   }
+
+  bool get _usesMethodChannelSurface {
+    final platform = PapyrusPlatform.instance;
+    return !platform.supportsNativeView || platform.supportsOverlaySurface;
+  }
+}
+
+class _DesktopOverlaySurface extends StatefulWidget {
+  const _DesktopOverlaySurface({required this.controller});
+
+  final PapyrusController controller;
+
+  @override
+  State<_DesktopOverlaySurface> createState() => _DesktopOverlaySurfaceState();
+}
+
+class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  final GlobalKey _key = GlobalKey();
+  late final Ticker _ticker;
+  _ViewportSnapshot? _lastSent;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _ticker = createTicker((_) => _scheduleViewportSync())..start();
+    _scheduleViewportSync();
+  }
+
+  @override
+  void didUpdateWidget(_DesktopOverlaySurface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _lastSent = null;
+    _scheduleViewportSync();
+  }
+
+  @override
+  void didChangeMetrics() {
+    _lastSent = null;
+    _scheduleViewportSync();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _ticker.dispose();
+    unawaited(
+      widget.controller.setViewport(
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        devicePixelRatio: 1,
+        visible: false,
+      ),
+    );
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _scheduleViewportSync();
+    return MouseRegion(
+      opaque: false,
+      child: ColoredBox(key: _key, color: Colors.transparent),
+    );
+  }
+
+  void _scheduleViewportSync() {
+    SchedulerBinding.instance.addPostFrameCallback((_) => _syncViewport());
+  }
+
+  void _syncViewport() {
+    if (!mounted) return;
+    final context = _key.currentContext;
+    if (context == null) return;
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return;
+
+    final offset = renderObject.localToGlobal(Offset.zero);
+    final size = renderObject.size;
+    final devicePixelRatio = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1;
+    final visible = size.width > 0 && size.height > 0;
+    final snapshot = _ViewportSnapshot(
+      x: offset.dx,
+      y: offset.dy,
+      width: size.width,
+      height: size.height,
+      devicePixelRatio: devicePixelRatio,
+      visible: visible,
+    );
+    if (snapshot == _lastSent) return;
+    _lastSent = snapshot;
+    unawaited(
+      widget.controller.setViewport(
+        x: snapshot.x,
+        y: snapshot.y,
+        width: snapshot.width,
+        height: snapshot.height,
+        devicePixelRatio: snapshot.devicePixelRatio,
+        visible: snapshot.visible,
+      ),
+    );
+  }
+}
+
+@immutable
+class _ViewportSnapshot {
+  const _ViewportSnapshot({
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+    required this.devicePixelRatio,
+    required this.visible,
+  });
+
+  final double x;
+  final double y;
+  final double width;
+  final double height;
+  final double devicePixelRatio;
+  final bool visible;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _ViewportSnapshot &&
+        other.x == x &&
+        other.y == y &&
+        other.width == width &&
+        other.height == height &&
+        other.devicePixelRatio == devicePixelRatio &&
+        other.visible == visible;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(x, y, width, height, devicePixelRatio, visible);
 }
 
 class _UnsupportedNativeView extends StatelessWidget {

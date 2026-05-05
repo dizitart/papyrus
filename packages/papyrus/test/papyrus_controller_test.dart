@@ -56,6 +56,39 @@ void main() {
     );
   });
 
+  testWidgets('PapyrusView drives desktop overlay viewport surfaces', (
+    tester,
+  ) async {
+    final platform = OverlayPapyrusPlatform();
+    PapyrusPlatform.instance = platform;
+    final controller = PapyrusController.create();
+
+    await tester.pumpWidget(
+      Center(
+        child: SizedBox(
+          width: 320,
+          height: 180,
+          child: PapyrusView(
+            controller: controller,
+            initialRequest: const PapyrusHtmlRequest(html: '<p>Overlay</p>'),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(platform.created, isTrue);
+    expect(platform.loaded.single, isA<PapyrusHtmlRequest>());
+    expect(platform.viewports, isNotEmpty);
+    expect(platform.viewports.last['visible'], isTrue);
+    expect(platform.viewports.last['width'], 320);
+    expect(platform.viewports.last['height'], 180);
+    expect(
+      find.textContaining('Papyrus native WebView embedding is not available'),
+      findsNothing,
+    );
+  });
+
   test('unsupported snapshot surfaces structured platform error', () async {
     final platform = RecordingPapyrusPlatform();
     PapyrusPlatform.instance = platform;
@@ -147,5 +180,39 @@ class RecordingPapyrusPlatform extends PapyrusPlatform {
       PapyrusErrorCode.unsupportedPlatformFeature,
       'Content size is not supported by this platform.',
     );
+  }
+}
+
+class OverlayPapyrusPlatform extends RecordingPapyrusPlatform {
+  bool created = false;
+  final viewports = <Map<String, Object?>>[];
+
+  @override
+  bool get supportsOverlaySurface => true;
+
+  @override
+  Future<void> create({
+    PapyrusConfiguration configuration = const PapyrusConfiguration(),
+  }) async {
+    created = true;
+  }
+
+  @override
+  Future<void> setViewport({
+    required double x,
+    required double y,
+    required double width,
+    required double height,
+    required double devicePixelRatio,
+    required bool visible,
+  }) async {
+    viewports.add({
+      'x': x,
+      'y': y,
+      'width': width,
+      'height': height,
+      'devicePixelRatio': devicePixelRatio,
+      'visible': visible,
+    });
   }
 }

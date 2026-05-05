@@ -18,6 +18,24 @@ class PapyrusController {
     return _platform.create(configuration: configuration);
   }
 
+  Future<void> setViewport({
+    required double x,
+    required double y,
+    required double width,
+    required double height,
+    required double devicePixelRatio,
+    required bool visible,
+  }) {
+    return _platform.setViewport(
+      x: x,
+      y: y,
+      width: width,
+      height: height,
+      devicePixelRatio: devicePixelRatio,
+      visible: visible,
+    );
+  }
+
   Future<void> load(PapyrusLoadRequest request) => _platform.load(request);
 
   Future<void> loadHtmlString(

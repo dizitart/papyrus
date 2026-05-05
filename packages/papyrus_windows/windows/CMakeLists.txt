@@ -48,6 +48,58 @@ target_include_directories(${PLUGIN_NAME} INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin)
 
+set(WEBVIEW2_VERSION "1.0.3124.44")
+set(WEBVIEW2_ROOT "${CMAKE_CURRENT_BINARY_DIR}/nuget/Microsoft.Web.WebView2")
+if (NOT EXISTS "${WEBVIEW2_ROOT}/build/native/include/WebView2.h")
+  find_program(NUGET_EXE nuget)
+  if (NUGET_EXE)
+    execute_process(
+      COMMAND "${NUGET_EXE}" install Microsoft.Web.WebView2
+        -Version ${WEBVIEW2_VERSION}
+        -OutputDirectory "${CMAKE_CURRENT_BINARY_DIR}/nuget"
+        -ExcludeVersion
+      RESULT_VARIABLE WEBVIEW2_NUGET_RESULT
+    )
+    if (NOT WEBVIEW2_NUGET_RESULT EQUAL 0)
+      message(FATAL_ERROR "Failed to restore Microsoft.Web.WebView2 ${WEBVIEW2_VERSION}.")
+    endif()
+  else()
+    file(MAKE_DIRECTORY "${WEBVIEW2_ROOT}")
+    set(WEBVIEW2_NUPKG "${CMAKE_CURRENT_BINARY_DIR}/nuget/Microsoft.Web.WebView2.${WEBVIEW2_VERSION}.nupkg")
+    file(DOWNLOAD
+      "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/${WEBVIEW2_VERSION}/microsoft.web.webview2.${WEBVIEW2_VERSION}.nupkg"
+      "${WEBVIEW2_NUPKG}"
+      STATUS WEBVIEW2_DOWNLOAD_STATUS
+      TLS_VERIFY ON
+    )
+    list(GET WEBVIEW2_DOWNLOAD_STATUS 0 WEBVIEW2_DOWNLOAD_CODE)
+    if (NOT WEBVIEW2_DOWNLOAD_CODE EQUAL 0)
+      message(FATAL_ERROR "Failed to download Microsoft.Web.WebView2 ${WEBVIEW2_VERSION}. Install nuget.exe or pre-populate ${WEBVIEW2_ROOT}.")
+    endif()
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E tar xvf "${WEBVIEW2_NUPKG}"
+      WORKING_DIRECTORY "${WEBVIEW2_ROOT}"
+      RESULT_VARIABLE WEBVIEW2_EXTRACT_RESULT
+    )
+    if (NOT WEBVIEW2_EXTRACT_RESULT EQUAL 0)
+      message(FATAL_ERROR "Failed to extract ${WEBVIEW2_NUPKG}.")
+    endif()
+  endif()
+endif()
+
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64|aarch64|AARCH64")
+  set(WEBVIEW2_ARCH "arm64")
+elseif (CMAKE_SIZEOF_VOID_P EQUAL 8)
+  set(WEBVIEW2_ARCH "x64")
+else()
+  set(WEBVIEW2_ARCH "x86")
+endif()
+
+target_include_directories(${PLUGIN_NAME} PRIVATE
+  "${WEBVIEW2_ROOT}/build/native/include")
+target_link_libraries(${PLUGIN_NAME} PRIVATE
+  "${WEBVIEW2_ROOT}/build/native/${WEBVIEW2_ARCH}/WebView2LoaderStatic.lib")
+
 # List of absolute paths to libraries that should be bundled with the plugin.
 # This list could contain prebuilt libraries, or libraries created by an
 # external build triggered from this build file.
@@ -86,7 +138,11 @@ add_executable(${TEST_RUNNER}
 )
 apply_standard_settings(${TEST_RUNNER})
 target_include_directories(${TEST_RUNNER} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(${TEST_RUNNER} PRIVATE
+  "${WEBVIEW2_ROOT}/build/native/include")
 target_link_libraries(${TEST_RUNNER} PRIVATE flutter_wrapper_plugin)
+target_link_libraries(${TEST_RUNNER} PRIVATE
+  "${WEBVIEW2_ROOT}/build/native/${WEBVIEW2_ARCH}/WebView2LoaderStatic.lib")
 target_link_libraries(${TEST_RUNNER} PRIVATE gtest_main gmock)
 # flutter_wrapper_plugin has link dependencies on the Flutter DLL.
 add_custom_command(TARGET ${TEST_RUNNER} POST_BUILD
