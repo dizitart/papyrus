@@ -121,7 +121,9 @@ void main() {
             allowedHosts: {'cdn.example.com'},
             allowedSchemes: {'https', 'papyrus-resource'},
             blockedResourceTypes: {PapyrusResourceType.image},
-            virtualResourceOrigin: Uri.parse('papyrus-resource://viewer.local/'),
+            virtualResourceOrigin: Uri.parse(
+              'papyrus-resource://viewer.local/',
+            ),
             enableRequestInterception: false,
           ),
           javascript: const PapyrusJavaScriptPolicy(

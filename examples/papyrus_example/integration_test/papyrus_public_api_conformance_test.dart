@@ -211,7 +211,9 @@ void main() {
     }
   });
 
-  testWidgets('public API conformance for text selection helpers', (tester) async {
+  testWidgets('public API conformance for text selection helpers', (
+    tester,
+  ) async {
     final controller = PapyrusController.create();
 
     addTearDown(() async {

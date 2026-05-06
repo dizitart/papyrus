@@ -292,10 +292,7 @@ void main() {
         'Papyrus Title',
       );
       expect(await controller.selectedText(), 'Quoted text');
-      expect(
-        await controller.quoteSelection(prefix: '> '),
-        '> Quoted text',
-      );
+      expect(await controller.quoteSelection(prefix: '> '), '> Quoted text');
 
       await controller.addJavaScriptChannel('bridge');
       await controller.removeJavaScriptChannel('bridge');

@@ -172,7 +172,7 @@ class PapyrusWindows extends PapyrusPlatform {
 }
 
 Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) =>
-  papyrusConfigurationToMap(configuration);
+    papyrusConfigurationToMap(configuration);
 
 PapyrusPlatformCapabilities? _capabilitiesFromMap(Map<String, Object?>? map) {
   if (map == null) return null;
