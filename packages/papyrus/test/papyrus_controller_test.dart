@@ -208,7 +208,10 @@ void main() {
     }
 
     await tester.pumpWidget(
-      PapyrusView(controller: controller, onNavigationRequest: handleNavigation),
+      PapyrusView(
+        controller: controller,
+        onNavigationRequest: handleNavigation,
+      ),
     );
 
     expect(platform.navigationResolver, same(handleNavigation));

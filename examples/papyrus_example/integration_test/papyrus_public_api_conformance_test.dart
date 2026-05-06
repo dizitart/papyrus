@@ -458,7 +458,9 @@ void main() {
     }
 
     final controller = PapyrusController.create();
-    final tempDirectory = await Directory.systemTemp.createTemp('papyrus_blocked_file_');
+    final tempDirectory = await Directory.systemTemp.createTemp(
+      'papyrus_blocked_file_',
+    );
     final file = File('${tempDirectory.path}/blocked.html');
     await file.writeAsString(_fileDocumentHtml);
 
