@@ -64,7 +64,8 @@ const String _selectionHtml = '''
 </html>
 ''';
 
-String _redirectingHtml(String destination) => '''
+String _redirectingHtml(String destination) =>
+    '''
 <!doctype html>
 <html>
   <head>
