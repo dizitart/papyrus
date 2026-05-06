@@ -194,6 +194,41 @@ void main() {
     expect(platform.resourceResolver, isNull);
   });
 
+  testWidgets('PapyrusView installs and clears the navigation resolver', (
+    tester,
+  ) async {
+    final platform = RecordingPapyrusPlatform();
+    PapyrusPlatform.instance = platform;
+    final controller = PapyrusController.create();
+
+    Future<PapyrusNavigationDecision> handleNavigation(
+      PapyrusNavigationRequest request,
+    ) async {
+      return PapyrusNavigationDecision.openExternally;
+    }
+
+    await tester.pumpWidget(
+      PapyrusView(controller: controller, onNavigationRequest: handleNavigation),
+    );
+
+    expect(platform.navigationResolver, same(handleNavigation));
+    expect(
+      await platform.navigationResolver!(
+        PapyrusNavigationRequest(
+          uri: Uri.parse('https://example.com'),
+          isMainFrame: true,
+          navigationType: PapyrusNavigationType.linkClicked,
+          hasUserGesture: true,
+        ),
+      ),
+      PapyrusNavigationDecision.openExternally,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+
+    expect(platform.navigationResolver, isNull);
+  });
+
   test('unsupported snapshot surfaces structured platform error', () async {
     final platform = RecordingPapyrusPlatform();
     PapyrusPlatform.instance = platform;
@@ -267,6 +302,9 @@ void main() {
         devicePixelRatio: 2,
         visible: true,
       );
+      controller.setNavigationResolver((request) async {
+        return PapyrusNavigationDecision.allow;
+      });
       controller.setResourceResolver(handleResource);
 
       expect(platform.createdConfigurations, hasLength(1));
@@ -275,6 +313,7 @@ void main() {
         PapyrusRemoteResourceMode.askHostApp,
       );
       expect(platform.viewports.single['visible'], isTrue);
+      expect(platform.navigationResolver, isNotNull);
       expect(platform.resourceResolver, same(handleResource));
 
       expect(await controller.canGoBack(), isTrue);
@@ -407,6 +446,7 @@ void main() {
 class RecordingPapyrusPlatform extends PapyrusPlatform {
   final loaded = <PapyrusLoadRequest>[];
   final commands = <String>[];
+  PapyrusNavigationResolver? navigationResolver;
   PapyrusResourceResolver? resourceResolver;
   final StreamController<PapyrusEvent> eventController =
       StreamController<PapyrusEvent>.broadcast();
@@ -438,6 +478,11 @@ class RecordingPapyrusPlatform extends PapyrusPlatform {
 
   @override
   Future<void> dispose() async => commands.add('dispose');
+
+  @override
+  void setNavigationResolver(PapyrusNavigationResolver? resolver) {
+    navigationResolver = resolver;
+  }
 
   @override
   void setResourceResolver(PapyrusResourceResolver? resolver) {

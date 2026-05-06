@@ -79,6 +79,8 @@ abstract class PapyrusPlatform {
 
   Future<void> removeJavaScriptChannel(String name) async {}
 
+  void setNavigationResolver(PapyrusNavigationResolver? resolver) {}
+
   void setResourceResolver(PapyrusResourceResolver? resolver) {}
 
   Future<PapyrusContentSize> getContentSize() {

@@ -458,6 +458,24 @@ class PapyrusNavigationRequest {
   final bool isMainFrame;
   final PapyrusNavigationType navigationType;
   final bool hasUserGesture;
+
+  JsonMap toMap() => {
+    'uri': uri.toString(),
+    'isMainFrame': isMainFrame,
+    'navigationType': navigationType.name,
+    'hasUserGesture': hasUserGesture,
+  };
+
+  static PapyrusNavigationRequest fromMap(Map<Object?, Object?> map) {
+    return PapyrusNavigationRequest(
+      uri: Uri.parse(map['uri'] as String? ?? ''),
+      isMainFrame: map['isMainFrame'] as bool? ?? false,
+      navigationType: _navigationTypeFromName(
+        map['navigationType'] as String? ?? PapyrusNavigationType.other.name,
+      ),
+      hasUserGesture: map['hasUserGesture'] as bool? ?? false,
+    );
+  }
 }
 
 class PapyrusResourcePolicy {
@@ -950,6 +968,10 @@ class PapyrusPlatformCapabilities {
   );
 }
 
+JsonMap papyrusNavigationDecisionToMap(PapyrusNavigationDecision decision) => {
+  'decision': decision.name,
+};
+
 JsonMap papyrusConfigurationToMap(
   PapyrusConfiguration configuration, {
   bool resourceResolverEnabled = false,
@@ -1031,6 +1053,13 @@ PapyrusResourceType _resourceTypeFromName(String name) {
   return PapyrusResourceType.values.firstWhere(
     (type) => type.name == name,
     orElse: () => PapyrusResourceType.other,
+  );
+}
+
+PapyrusNavigationType _navigationTypeFromName(String name) {
+  return PapyrusNavigationType.values.firstWhere(
+    (type) => type.name == name,
+    orElse: () => PapyrusNavigationType.other,
   );
 }
 

@@ -22,6 +22,7 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
   private var webView: WKWebView?
   private var currentConfiguration: [String: Any] = [:]
   private var appInitiatedNavigationURLs = Set<String>()
+  private var navigationResolverEnabled = false
   private var pendingLoad: [String: Any]?
   private var resourceResolverEnabled = false
   private var virtualResources: [String: PapyrusIosInlineResource] = [:]
@@ -58,6 +59,9 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
         return
       }
       load(request: request)
+      result(nil)
+    case "setNavigationResolverEnabled":
+      navigationResolverEnabled = call.arguments as? Bool ?? false
       result(nil)
     case "reload":
       webView?.reload()
@@ -129,6 +133,7 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
   fileprivate func createWebView(config: [String: Any]) -> WKWebView {
     currentConfiguration = config
     virtualResourceScheme = sanitizeCustomScheme(config["virtualResourceScheme"] as? String)
+    navigationResolverEnabled = config["navigationResolverEnabled"] as? Bool ?? navigationResolverEnabled
     resourceResolverEnabled = config["resourceResolverEnabled"] as? Bool ?? resourceResolverEnabled
     let webConfig = WKWebViewConfiguration()
     if config["ephemeral"] as? Bool == true {
@@ -225,8 +230,6 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
       return
     }
 
-    channel?.invokeMethod("navigationRequest", arguments: url.absoluteString)
-
     if navigationAction.targetFrame?.isMainFrame != false,
       consumeAppInitiatedNavigation(url)
     {
@@ -234,26 +237,23 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
       return
     }
 
-    let decision = navigationDecision(
+    let fallbackDecision = navigationDecision(
       for: url,
       isMainFrame: navigationAction.targetFrame?.isMainFrame ?? false,
       hasUserGesture: navigationHasUserGesture(navigationAction)
     )
-    switch decision {
-    case "allow":
-      decisionHandler(.allow)
-    case "openExternally":
-      UIApplication.shared.open(url, options: [:], completionHandler: nil)
-      decisionHandler(.cancel)
-    case "download":
-      if #available(iOS 14.5, *) {
-        decisionHandler(.download)
-      } else {
-        UIApplication.shared.open(url, options: [:], completionHandler: nil)
-        decisionHandler(.cancel)
-      }
-    default:
-      decisionHandler(.cancel)
+
+    guard navigationResolverEnabled, let channel else {
+      applyNavigationDecision(fallbackDecision, for: url, decisionHandler: decisionHandler)
+      return
+    }
+
+    channel.invokeMethod(
+      "navigationRequest",
+      arguments: navigationArguments(for: navigationAction)
+    ) { [weak self] result in
+      let decision = self?.navigationDecision(from: result, fallback: fallbackDecision) ?? fallbackDecision
+      self?.applyNavigationDecision(decision, for: url, decisionHandler: decisionHandler)
     }
   }
 
@@ -513,6 +513,45 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
     return defaultDecision
   }
 
+  private func navigationDecision(from result: Any?, fallback: String) -> String {
+    guard let map = result as? [String: Any], let decision = map["decision"] as? String else {
+      return fallback
+    }
+    return decision
+  }
+
+  private func applyNavigationDecision(
+    _ decision: String,
+    for url: URL,
+    decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+  ) {
+    switch decision {
+    case "allow":
+      decisionHandler(.allow)
+    case "openExternally":
+      UIApplication.shared.open(url, options: [:], completionHandler: nil)
+      decisionHandler(.cancel)
+    case "download":
+      if #available(iOS 14.5, *) {
+        decisionHandler(.download)
+      } else {
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+        decisionHandler(.cancel)
+      }
+    default:
+      decisionHandler(.cancel)
+    }
+  }
+
+  private func navigationArguments(for navigationAction: WKNavigationAction) -> [String: Any] {
+    return [
+      "uri": navigationAction.request.url?.absoluteString ?? "",
+      "isMainFrame": navigationAction.targetFrame?.isMainFrame ?? false,
+      "navigationType": navigationType(for: navigationAction).rawValue,
+      "hasUserGesture": navigationHasUserGesture(navigationAction),
+    ]
+  }
+
   private func navigationHasUserGesture(_ navigationAction: WKNavigationAction) -> Bool {
     switch navigationAction.navigationType {
     case .linkActivated, .formSubmitted, .formResubmitted, .backForward:
@@ -521,6 +560,32 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
       return false
     @unknown default:
       return false
+    }
+  }
+
+  private enum PapyrusIosNavigationType: String {
+    case linkClicked
+    case formSubmitted
+    case backForward
+    case reload
+    case programmatic
+    case other
+  }
+
+  private func navigationType(for navigationAction: WKNavigationAction) -> PapyrusIosNavigationType {
+    switch navigationAction.navigationType {
+    case .linkActivated:
+      return .linkClicked
+    case .formSubmitted, .formResubmitted:
+      return .formSubmitted
+    case .backForward:
+      return .backForward
+    case .reload:
+      return .reload
+    case .other:
+      return navigationHasUserGesture(navigationAction) ? .other : .programmatic
+    @unknown default:
+      return .other
     }
   }
 

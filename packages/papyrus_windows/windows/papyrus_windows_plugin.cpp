@@ -805,6 +805,21 @@ void PapyrusWindowsPlugin::LoadRequest(
   created_ = true;
 }
 
+bool IsFileLoadAllowed(const flutter::EncodableMap& configuration,
+                       const flutter::EncodableMap& request) {
+  const bool allow_file_access =
+      BoolFromValue(configuration, "allowFileAccess", false);
+  const std::string type = StringFromValue(request, "type");
+  if (type == "file") {
+    return allow_file_access;
+  }
+  if (type != "uri") {
+    return true;
+  }
+  const std::string uri = StringFromValue(request, "uri");
+  return uri.rfind("file://", 0) != 0 || allow_file_access;
+}
+
 void PapyrusWindowsPlugin::UpdateVirtualResources(
     const flutter::EncodableMap& request) {
   virtual_resources_.clear();
@@ -907,6 +922,12 @@ void PapyrusWindowsPlugin::HandleMethodCall(
     }
     const auto* args = std::get_if<flutter::EncodableMap>(method_call.arguments());
     if (args != nullptr) {
+      if (!IsFileLoadAllowed(configuration_, *args)) {
+        result->Error(
+            "navigationBlocked",
+            "File loading is disabled by the current Papyrus security policy.");
+        return;
+      }
       LoadRequest(*args);
     }
     result->Success();
@@ -966,6 +987,8 @@ void PapyrusWindowsPlugin::HandleMethodCall(
     if (const auto* enabled = std::get_if<bool>(method_call.arguments())) {
       resource_resolver_enabled_ = *enabled;
     }
+    result->Success();
+  } else if (method == "setNavigationResolverEnabled") {
     result->Success();
   } else if (method == "dispose") {
     if (webview_ && web_resource_requested_registered_) {

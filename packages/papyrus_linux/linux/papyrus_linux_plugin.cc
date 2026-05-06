@@ -311,6 +311,8 @@ struct _PapyrusLinuxPlugin {
   GtkWidget* overlay;
   GtkWidget* fixed;
   WebKitWebView* web_view;
+  gboolean allow_file_access;
+  gboolean navigation_resolver_enabled;
   gboolean resource_resolver_enabled;
   gboolean visible;
   gchar* virtual_resource_scheme;
@@ -455,6 +457,8 @@ static void ensure_overlay_container(PapyrusLinuxPlugin* self) {
 
 static void ensure_web_view(PapyrusLinuxPlugin* self, FlValue* config) {
   update_virtual_resource_scheme(self, config);
+  self->allow_file_access = fl_value_lookup_bool(config, "allowFileAccess",
+                                                 self->allow_file_access);
   self->resource_resolver_enabled =
       fl_value_lookup_bool(config, "resourceResolverEnabled",
                            self->resource_resolver_enabled);
@@ -468,7 +472,7 @@ static void ensure_web_view(PapyrusLinuxPlugin* self, FlValue* config) {
   webkit_settings_set_enable_javascript(
       settings, fl_value_lookup_bool(config, "allowJavaScript", FALSE));
   webkit_settings_set_javascript_can_open_windows_automatically(
-      settings, FALSE);
+      settings, fl_value_lookup_bool(config, "allowPopups", FALSE));
   webkit_settings_set_enable_write_console_messages_to_stdout(settings, FALSE);
   webkit_settings_set_enable_developer_extras(
       settings, fl_value_lookup_bool(config, "debuggingEnabled", FALSE));
@@ -599,6 +603,22 @@ static void load_request(PapyrusLinuxPlugin* self, FlValue* request) {
       }
     }
   }
+}
+
+static gboolean is_file_load_allowed(PapyrusLinuxPlugin* self, FlValue* request) {
+  const gchar* type = fl_value_lookup_string_or_null(request, "type");
+  if (type == nullptr) {
+    return TRUE;
+  }
+  if (g_strcmp0(type, "file") == 0) {
+    return self->allow_file_access;
+  }
+  if (g_strcmp0(type, "uri") != 0) {
+    return TRUE;
+  }
+  const gchar* uri = fl_value_lookup_string_or_null(request, "uri");
+  return uri == nullptr || !g_str_has_prefix(uri, "file://") ||
+         self->allow_file_access;
 }
 
 static FlMethodResponse* content_size_response(PapyrusLinuxPlugin* self) {
@@ -772,8 +792,14 @@ static void papyrus_linux_plugin_handle_method_call(
   } else if (strcmp(method, "debugOverlayState") == 0) {
     response = debug_overlay_state_response(self);
   } else if (strcmp(method, "load") == 0) {
+    if (!is_file_load_allowed(self, args)) {
+      response = error_response(
+          "navigationBlocked",
+          "File loading is disabled by the current Papyrus security policy.");
+    } else {
     load_request(self, args);
     response = success_null();
+    }
   } else if (strcmp(method, "reload") == 0) {
     if (self->web_view != nullptr) webkit_web_view_reload(self->web_view);
     response = success_null();
@@ -854,6 +880,11 @@ static void papyrus_linux_plugin_handle_method_call(
       self->resource_resolver_enabled = FALSE;
     }
     response = success_null();
+  } else if (strcmp(method, "setNavigationResolverEnabled") == 0) {
+    self->navigation_resolver_enabled =
+        args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_BOOL &&
+        fl_value_get_bool(args);
+    response = success_null();
   } else if (strcmp(method, "setResourceResolverEnabled") == 0) {
     self->resource_resolver_enabled =
         args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_BOOL &&
@@ -913,6 +944,8 @@ static void papyrus_linux_plugin_init(PapyrusLinuxPlugin* self) {
   self->overlay = nullptr;
   self->fixed = nullptr;
   self->web_view = nullptr;
+  self->allow_file_access = FALSE;
+  self->navigation_resolver_enabled = FALSE;
   self->resource_resolver_enabled = FALSE;
   self->visible = FALSE;
   self->virtual_resource_scheme = g_strdup(kDefaultVirtualResourceScheme);

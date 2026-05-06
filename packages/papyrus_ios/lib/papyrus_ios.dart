@@ -10,6 +10,7 @@ class PapyrusIos extends PapyrusPlatform {
   final MethodChannel _channel;
   final StreamController<PapyrusEvent> _events =
       StreamController<PapyrusEvent>.broadcast();
+  PapyrusNavigationResolver? _navigationResolver;
   PapyrusResourceResolver? _resourceResolver;
   bool _methodHandlerInstalled = false;
 
@@ -42,10 +43,23 @@ class PapyrusIos extends PapyrusPlatform {
   }
 
   @override
+  void setNavigationResolver(PapyrusNavigationResolver? resolver) {
+    _ensureMethodHandlerInstalled();
+    _navigationResolver = resolver;
+    unawaited(
+      _channel.invokeMethod<void>(
+        'setNavigationResolverEnabled',
+        resolver != null,
+      ),
+    );
+  }
+
+  @override
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
   }) {
     final config = _configurationMap(configuration);
+    config['navigationResolverEnabled'] = _navigationResolver != null;
     config['resourceResolverEnabled'] = _resourceResolver != null;
     return _channel.invokeMethod<void>('create', config);
   }
@@ -211,6 +225,15 @@ extension on PapyrusIos {
             ? const PapyrusAllowResource()
             : await resolver(request);
         return papyrusResourceDecisionToMap(decision);
+      case 'navigationRequest':
+        final resolver = _navigationResolver;
+        if (resolver == null) {
+          return null;
+        }
+        final decision = await resolver(
+          _navigationRequestFromArguments(call.arguments),
+        );
+        return papyrusNavigationDecisionToMap(decision);
       default:
         return null;
     }
@@ -222,6 +245,18 @@ Map<Object?, Object?> _mapArguments(Object? arguments) {
     return arguments;
   }
   return const {};
+}
+
+PapyrusNavigationRequest _navigationRequestFromArguments(Object? arguments) {
+  if (arguments is Map<Object?, Object?>) {
+    return PapyrusNavigationRequest.fromMap(arguments);
+  }
+  return PapyrusNavigationRequest(
+    uri: Uri.parse(arguments as String? ?? ''),
+    isMainFrame: true,
+    navigationType: PapyrusNavigationType.other,
+    hasUserGesture: false,
+  );
 }
 
 Uri? _tryParseUri(String? value) => value == null ? null : Uri.tryParse(value);

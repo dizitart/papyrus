@@ -70,6 +70,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private var webView: WebView? = null
     private var pendingLoad: Map<*, *>? = null
     private var progress: Double = 0.0
+    private var navigationResolverEnabled = false
     private var resourceResolverEnabled = false
     private var resourcePolicy = PapyrusAndroidResourcePolicy()
     private var navigationPolicy = PapyrusAndroidNavigationPolicy()
@@ -100,6 +101,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         appInitiatedNavigations.clear()
         pendingLoad = null
         virtualResources.clear()
+        navigationResolverEnabled = false
         resourceResolverEnabled = false
     }
 
@@ -146,6 +148,10 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     cookieManager.flush()
                     result.success(null)
                 }
+                "setNavigationResolverEnabled" -> {
+                    navigationResolverEnabled = call.arguments == true
+                    result.success(null)
+                }
                 "setResourceResolverEnabled" -> {
                     resourceResolverEnabled = call.arguments == true
                     result.success(null)
@@ -171,6 +177,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     @SuppressLint("SetJavaScriptEnabled")
     internal fun createWebView(config: Map<*, *>): WebView {
         currentConfiguration = config
+        navigationResolverEnabled = config["navigationResolverEnabled"] as? Boolean ?: navigationResolverEnabled
         resourceResolverEnabled = config["resourceResolverEnabled"] as? Boolean ?: resourceResolverEnabled
         val view = WebView(appContext)
         resourcePolicy = resourcePolicyFromConfig(config)
@@ -264,18 +271,37 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
         view.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                channel.invokeMethod("navigationRequest", request.url.toString())
                 if (request.isForMainFrame && consumeAppInitiatedNavigation(request.url)) {
                     return false
                 }
-                return when (navigationDecisionFor(request)) {
-                    "allow" -> false
-                    "openExternally" -> {
-                        openExternally(request.url)
-                        true
-                    }
-                    else -> true
+
+                val fallbackDecision = navigationDecisionFor(request)
+                if (!navigationResolverEnabled) {
+                    return applyNavigationDecision(view, request, fallbackDecision)
                 }
+
+                channel.invokeMethod(
+                    "navigationRequest",
+                    navigationArgumentsFor(request),
+                    object : MethodChannel.Result {
+                        override fun success(result: Any?) {
+                            applyNavigationDecision(
+                                view,
+                                request,
+                                navigationDecisionFromResult(result, fallbackDecision),
+                            )
+                        }
+
+                        override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                            applyNavigationDecision(view, request, fallbackDecision)
+                        }
+
+                        override fun notImplemented() {
+                            applyNavigationDecision(view, request, fallbackDecision)
+                        }
+                    }
+                )
+                return true
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -556,6 +582,57 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             return "openExternally"
         }
         return navigationPolicy.defaultDecision
+    }
+
+    private fun navigationArgumentsFor(request: WebResourceRequest): Map<String, Any> {
+        return mapOf(
+            "uri" to request.url.toString(),
+            "isMainFrame" to request.isForMainFrame,
+            "navigationType" to navigationTypeFor(request),
+            "hasUserGesture" to requestHasUserGesture(request),
+        )
+    }
+
+    private fun navigationTypeFor(request: WebResourceRequest): String {
+        return when {
+            requestHasUserGesture(request) -> "linkClicked"
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && request.isRedirect -> "programmatic"
+            else -> "other"
+        }
+    }
+
+    private fun navigationDecisionFromResult(result: Any?, fallback: String): String {
+        val map = result as? Map<*, *> ?: return fallback
+        return map["decision"] as? String ?: fallback
+    }
+
+    private fun applyNavigationDecision(
+        view: WebView,
+        request: WebResourceRequest,
+        decision: String,
+    ): Boolean {
+        return when (decision) {
+            "allow" -> {
+                replayNavigation(view, request)
+                true
+            }
+            "openExternally" -> {
+                openExternally(request.url)
+                true
+            }
+            else -> true
+        }
+    }
+
+    private fun replayNavigation(view: WebView, request: WebResourceRequest) {
+        val url = request.url.toString()
+        markAppInitiatedNavigation(url)
+        val headers = request.requestHeaders
+        if (headers.isEmpty()) {
+            view.loadUrl(url)
+        } else {
+            view.loadUrl(url, headers)
+        }
     }
 
     private fun requestHasUserGesture(request: WebResourceRequest): Boolean {

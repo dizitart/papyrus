@@ -121,6 +121,10 @@ class PapyrusController {
     return _platform.removeJavaScriptChannel(name);
   }
 
+  void setNavigationResolver(PapyrusNavigationResolver? resolver) {
+    _platform.setNavigationResolver(resolver);
+  }
+
   void setResourceResolver(PapyrusResourceResolver? resolver) {
     _platform.setResourceResolver(resolver);
   }

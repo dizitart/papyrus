@@ -65,6 +65,7 @@ class _PapyrusViewState extends State<PapyrusView> {
   void initState() {
     super.initState();
     widget.onCreated?.call(widget.controller);
+    widget.controller.setNavigationResolver(widget.onNavigationRequest);
     widget.controller.setResourceResolver(widget.onResourceRequest);
     _subscription = widget.controller.events.listen(_handleEvent);
     if (_usesMethodChannelSurface) {
@@ -82,15 +83,21 @@ class _PapyrusViewState extends State<PapyrusView> {
     final initialRequestChanged =
         _requestSignature(oldWidget.initialRequest) !=
         _requestSignature(widget.initialRequest);
+    final navigationResolverChanged =
+        oldWidget.onNavigationRequest != widget.onNavigationRequest;
     final resourceResolverChanged =
         oldWidget.onResourceRequest != widget.onResourceRequest;
 
     if (controllerChanged) {
+      oldWidget.controller.setNavigationResolver(null);
       oldWidget.controller.setResourceResolver(null);
       unawaited(_subscription?.cancel());
+      widget.controller.setNavigationResolver(widget.onNavigationRequest);
       widget.controller.setResourceResolver(widget.onResourceRequest);
       _subscription = widget.controller.events.listen(_handleEvent);
       widget.onCreated?.call(widget.controller);
+    } else if (navigationResolverChanged) {
+      widget.controller.setNavigationResolver(widget.onNavigationRequest);
     } else if (resourceResolverChanged) {
       widget.controller.setResourceResolver(widget.onResourceRequest);
     }
@@ -147,6 +154,7 @@ class _PapyrusViewState extends State<PapyrusView> {
   @override
   void dispose() {
     _subscription?.cancel();
+    widget.controller.setNavigationResolver(null);
     widget.controller.setResourceResolver(null);
     if (PapyrusPlatform.instance.supportsOverlaySurface) {
       unawaited(

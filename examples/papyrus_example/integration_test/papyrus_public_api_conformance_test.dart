@@ -356,6 +356,161 @@ void main() {
     );
   });
 
+  testWidgets('public API conformance for host-blocked navigation callback', (
+    tester,
+  ) async {
+    final controller = PapyrusController.create();
+    final resourceRequests = <PapyrusResourceRequest>[];
+    final navigationRequests = <PapyrusNavigationRequest>[];
+    final sourceUri = _platformDocumentUri('callback-redirect-source.html');
+    final destinationUri = _platformDocumentUri(
+      'callback-redirect-destination.html',
+    );
+    final responses = <Uri, String>{
+      sourceUri: _redirectingHtml(destinationUri.toString()),
+      destinationUri: _documentBHtml,
+    };
+
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await _withStepTimeout(controller.dispose(), 'controller.dispose');
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 360,
+              height: 220,
+              child: PapyrusView(
+                controller: controller,
+                configuration: const PapyrusConfiguration(
+                  security: PapyrusSecurityPolicy(
+                    allowJavaScript: true,
+                    allowFileAccess: true,
+                  ),
+                  navigation: PapyrusNavigationPolicy(
+                    defaultDecision: PapyrusNavigationDecision.allow,
+                    allowMainFrameNavigation: true,
+                    allowSubFrameNavigation: true,
+                  ),
+                  resources: PapyrusResourcePolicy(
+                    remoteResources: PapyrusRemoteResourceMode.askHostApp,
+                  ),
+                ),
+                initialRequest: PapyrusUriRequest(uri: sourceUri),
+                onNavigationRequest: (request) async {
+                  navigationRequests.add(request);
+                  if (request.uri == destinationUri) {
+                    return PapyrusNavigationDecision.block;
+                  }
+                  return PapyrusNavigationDecision.allow;
+                },
+                onResourceRequest: (request) async {
+                  resourceRequests.add(request);
+                  final html = responses[request.uri];
+                  if (html == null) {
+                    return const PapyrusBlockResource();
+                  }
+                  return PapyrusRespondWithResource(
+                    PapyrusResourceResponse(
+                      bytes: Uint8List.fromList(utf8.encode(html)),
+                      mimeType: 'text/html',
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await _waitForCurrentUri(tester, controller, sourceUri);
+    await _waitForCondition(
+      tester,
+      () => resourceRequests.any((request) => request.uri == sourceUri),
+      'Timed out waiting for intercepted request for $sourceUri',
+    );
+    await _waitForCondition(
+      tester,
+      () => navigationRequests.any((request) => request.uri == destinationUri),
+      'Timed out waiting for navigation callback for $destinationUri',
+    );
+
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(await controller.currentUri(), sourceUri);
+    expect(
+      resourceRequests.any((request) => request.uri == destinationUri),
+      isFalse,
+    );
+  });
+
+  testWidgets('public API conformance for blocked file loading', (
+    tester,
+  ) async {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return;
+    }
+
+    final controller = PapyrusController.create();
+    final tempDirectory = await Directory.systemTemp.createTemp('papyrus_blocked_file_');
+    final file = File('${tempDirectory.path}/blocked.html');
+    await file.writeAsString(_fileDocumentHtml);
+
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await _withStepTimeout(controller.dispose(), 'controller.dispose');
+      if (await tempDirectory.exists()) {
+        await _withStepTimeout(
+          tempDirectory.delete(recursive: true),
+          'tempDirectory.delete',
+        );
+      }
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 360,
+              height: 220,
+              child: PapyrusView(
+                controller: controller,
+                configuration: PapyrusConfiguration(
+                  security: PapyrusSecurityPolicy(
+                    allowJavaScript: true,
+                    allowFileAccess: false,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await expectLater(
+      _withStepTimeout(controller.loadFile(file.path), 'controller.loadFile'),
+      throwsA(
+        isA<Object?>().having(
+          (error) => error.toString(),
+          'message',
+          contains('navigationBlocked'),
+        ),
+      ),
+    );
+
+    expect(await controller.currentUri(), isNull);
+  });
+
   testWidgets('public API conformance for print and storage maintenance', (
     tester,
   ) async {
