@@ -20,6 +20,8 @@ private let papyrusSelectedTextScript = "(function(){var selection = window.getS
 public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WKUIDelegate {
   private var channel: FlutterMethodChannel?
   private var webView: WKWebView?
+  private var currentConfiguration: [String: Any] = [:]
+  private var appInitiatedNavigationURLs = Set<String>()
   private var pendingLoad: [String: Any]?
   private var resourceResolverEnabled = false
   private var virtualResources: [String: PapyrusIosInlineResource] = [:]
@@ -44,7 +46,18 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
       createWebView(config: call.arguments as? [String: Any] ?? [:])
       result(nil)
     case "load":
-      load(request: call.arguments as? [String: Any] ?? [:])
+      let request = call.arguments as? [String: Any] ?? [:]
+      guard isLoadAllowed(request) else {
+        result(
+          FlutterError(
+            code: "navigationBlocked",
+            message: "File loading is disabled by the current Papyrus security policy.",
+            details: request["absolutePath"] ?? request["uri"]
+          )
+        )
+        return
+      }
+      load(request: request)
       result(nil)
     case "reload":
       webView?.reload()
@@ -97,6 +110,8 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
       resourceResolverEnabled = call.arguments as? Bool ?? false
       result(nil)
     case "dispose":
+      currentConfiguration.removeAll()
+      appInitiatedNavigationURLs.removeAll()
       pendingLoad = nil
       webView = nil
       virtualResources.removeAll()
@@ -112,6 +127,7 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
 
   @discardableResult
   fileprivate func createWebView(config: [String: Any]) -> WKWebView {
+    currentConfiguration = config
     virtualResourceScheme = sanitizeCustomScheme(config["virtualResourceScheme"] as? String)
     resourceResolverEnabled = config["resourceResolverEnabled"] as? Bool ?? resourceResolverEnabled
     let webConfig = WKWebViewConfiguration()
@@ -127,6 +143,14 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
       webConfig.defaultWebpagePreferences = preferences
     } else {
       webConfig.preferences.javaScriptEnabled = config["allowJavaScript"] as? Bool == true
+    }
+    webConfig.preferences.javaScriptCanOpenWindowsAutomatically = config["allowPopups"] as? Bool == true
+    webConfig.allowsInlineMediaPlayback =
+      config["allowInlineMediaPlayback"] as? Bool == true ||
+      config["inlinePlayback"] as? Bool == true
+    if #available(iOS 10.0, *) {
+      webConfig.mediaTypesRequiringUserActionForPlayback =
+        config["requireMediaUserGesture"] as? Bool != false ? .all : []
     }
     let view = WKWebView(frame: .zero, configuration: webConfig)
     view.navigationDelegate = self
@@ -157,17 +181,23 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
       let base = (request["baseUri"] as? String).flatMap(URL.init(string:))
       let html = request["html"] as? String ?? ""
       if base == nil, let url = htmlDataURL(for: html) {
+        markAppInitiatedNavigation(url)
         view.load(URLRequest(url: url))
       } else {
+        if let base {
+          markAppInitiatedNavigation(base)
+        }
         view.loadHTMLString(html, baseURL: base)
       }
     case "uri":
       if let value = request["uri"] as? String, let url = URL(string: value) {
+        markAppInitiatedNavigation(url)
         view.load(URLRequest(url: url))
       }
     case "file":
       if let path = request["absolutePath"] as? String {
         let url = URL(fileURLWithPath: path)
+        markAppInitiatedNavigation(url)
         view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
       }
     default:
@@ -190,8 +220,57 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
   }
 
   public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-    channel?.invokeMethod("navigationRequest", arguments: navigationAction.request.url?.absoluteString)
-    decisionHandler(.allow)
+    guard let url = navigationAction.request.url else {
+      decisionHandler(.cancel)
+      return
+    }
+
+    channel?.invokeMethod("navigationRequest", arguments: url.absoluteString)
+
+    if navigationAction.targetFrame?.isMainFrame != false,
+      consumeAppInitiatedNavigation(url)
+    {
+      decisionHandler(.allow)
+      return
+    }
+
+    let decision = navigationDecision(
+      for: url,
+      isMainFrame: navigationAction.targetFrame?.isMainFrame ?? false,
+      hasUserGesture: navigationHasUserGesture(navigationAction)
+    )
+    switch decision {
+    case "allow":
+      decisionHandler(.allow)
+    case "openExternally":
+      UIApplication.shared.open(url, options: [:], completionHandler: nil)
+      decisionHandler(.cancel)
+    case "download":
+      if #available(iOS 14.5, *) {
+        decisionHandler(.download)
+      } else {
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+        decisionHandler(.cancel)
+      }
+    default:
+      decisionHandler(.cancel)
+    }
+  }
+
+  public func webView(
+    _ webView: WKWebView,
+    createWebViewWith configuration: WKWebViewConfiguration,
+    for navigationAction: WKNavigationAction,
+    windowFeatures: WKWindowFeatures
+  ) -> WKWebView? {
+    guard currentConfiguration["allowPopups"] as? Bool == true else {
+      return nil
+    }
+    guard let url = navigationAction.request.url else {
+      return nil
+    }
+    webView.load(URLRequest(url: url))
+    return nil
   }
 
   public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -394,6 +473,91 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
     }
     let base64 = data.base64EncodedString()
     return URL(string: "data:text/html;charset=utf-8;base64,\(base64)")
+  }
+
+  private func navigationDecision(
+    for url: URL,
+    isMainFrame: Bool,
+    hasUserGesture: Bool
+  ) -> String {
+    let scheme = url.scheme?.lowercased() ?? ""
+    let blockedSchemes = stringSet(currentConfiguration["navigationBlockedSchemes"])
+    if blockedSchemes.contains(scheme) {
+      return "block"
+    }
+
+    let defaultDecision = currentConfiguration["navigationDefaultDecision"] as? String ?? "block"
+    let allowMainFrameNavigation = currentConfiguration["allowMainFrameNavigation"] as? Bool ?? false
+    let allowSubFrameNavigation = currentConfiguration["allowSubFrameNavigation"] as? Bool ?? false
+    if isMainFrame && !allowMainFrameNavigation {
+      return defaultDecision
+    }
+    if !isMainFrame && !allowSubFrameNavigation {
+      return "block"
+    }
+
+    let allowedSchemes = stringSet(currentConfiguration["navigationAllowedSchemes"])
+    if allowedSchemes.contains(scheme) {
+      return "allow"
+    }
+
+    let externalSchemes = stringSet(currentConfiguration["navigationExternalSchemes"])
+    if externalSchemes.contains(scheme) {
+      let requireUserGesture = currentConfiguration["requireUserGestureForExternalOpen"] as? Bool ?? true
+      if requireUserGesture && !hasUserGesture {
+        return "block"
+      }
+      return "openExternally"
+    }
+
+    return defaultDecision
+  }
+
+  private func navigationHasUserGesture(_ navigationAction: WKNavigationAction) -> Bool {
+    switch navigationAction.navigationType {
+    case .linkActivated, .formSubmitted, .formResubmitted, .backForward:
+      return true
+    case .reload, .other:
+      return false
+    @unknown default:
+      return false
+    }
+  }
+
+  private func isLoadAllowed(_ request: [String: Any]) -> Bool {
+    guard let type = request["type"] as? String else {
+      return true
+    }
+    switch type {
+    case "file":
+      return currentConfiguration["allowFileAccess"] as? Bool == true
+    case "uri":
+      guard
+        let value = request["uri"] as? String,
+        let url = URL(string: value),
+        url.isFileURL
+      else {
+        return true
+      }
+      return currentConfiguration["allowFileAccess"] as? Bool == true
+    default:
+      return true
+    }
+  }
+
+  private func stringSet(_ value: Any?) -> Set<String> {
+    guard let values = value as? [String] else {
+      return []
+    }
+    return Set(values.map { $0.lowercased() })
+  }
+
+  private func markAppInitiatedNavigation(_ url: URL) {
+    appInitiatedNavigationURLs.insert(url.absoluteString)
+  }
+
+  private func consumeAppInitiatedNavigation(_ url: URL) -> Bool {
+    appInitiatedNavigationURLs.remove(url.absoluteString) != nil
   }
 
   private func capabilities() -> [String: Bool] {

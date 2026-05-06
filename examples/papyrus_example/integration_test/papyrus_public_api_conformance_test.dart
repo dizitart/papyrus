@@ -64,6 +64,25 @@ const String _selectionHtml = '''
 </html>
 ''';
 
+String _redirectingHtml(String destination) => '''
+<!doctype html>
+<html>
+  <head>
+    <title>Redirect Source</title>
+    <script>
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          window.location.href = '$destination';
+        }, 0);
+      });
+    </script>
+  </head>
+  <body style="margin:0;font:20px -apple-system,sans-serif">
+    <p>Redirect source</p>
+  </body>
+</html>
+''';
+
 const PapyrusConfiguration _conformanceConfiguration = PapyrusConfiguration(
   security: PapyrusSecurityPolicy(allowJavaScript: true, allowFileAccess: true),
   resources: PapyrusResourcePolicy(
@@ -255,6 +274,85 @@ void main() {
     await controller.copySelection();
     final clipboardData = await Clipboard.getData('text/plain');
     expect(clipboardData?.text, 'Papyrus selection text');
+  });
+
+  testWidgets('public API conformance for blocked scripted navigation', (
+    tester,
+  ) async {
+    final controller = PapyrusController.create();
+    final resourceRequests = <PapyrusResourceRequest>[];
+    final sourceUri = _platformDocumentUri('redirect-source.html');
+    final destinationUri = _platformDocumentUri('redirect-destination.html');
+    final responses = <Uri, String>{
+      sourceUri: _redirectingHtml(destinationUri.toString()),
+      destinationUri: _documentBHtml,
+    };
+
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await _withStepTimeout(controller.dispose(), 'controller.dispose');
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 360,
+              height: 220,
+              child: PapyrusView(
+                controller: controller,
+                configuration: const PapyrusConfiguration(
+                  security: PapyrusSecurityPolicy(
+                    allowJavaScript: true,
+                    allowFileAccess: true,
+                  ),
+                  navigation: PapyrusNavigationPolicy(
+                    defaultDecision: PapyrusNavigationDecision.block,
+                    allowMainFrameNavigation: false,
+                    allowSubFrameNavigation: false,
+                  ),
+                  resources: PapyrusResourcePolicy(
+                    remoteResources: PapyrusRemoteResourceMode.askHostApp,
+                  ),
+                ),
+                initialRequest: PapyrusUriRequest(uri: sourceUri),
+                onResourceRequest: (request) async {
+                  resourceRequests.add(request);
+                  final html = responses[request.uri];
+                  if (html == null) {
+                    return const PapyrusBlockResource();
+                  }
+                  return PapyrusRespondWithResource(
+                    PapyrusResourceResponse(
+                      bytes: Uint8List.fromList(utf8.encode(html)),
+                      mimeType: 'text/html',
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await _waitForCurrentUri(tester, controller, sourceUri);
+    await _waitForCondition(
+      tester,
+      () => resourceRequests.any((request) => request.uri == sourceUri),
+      'Timed out waiting for intercepted request for $sourceUri',
+    );
+
+    await tester.pump(const Duration(milliseconds: 750));
+
+    expect(await controller.currentUri(), sourceUri);
+    expect(
+      resourceRequests.any((request) => request.uri == destinationUri),
+      isFalse,
+    );
   });
 
   testWidgets('public API conformance for print and storage maintenance', (

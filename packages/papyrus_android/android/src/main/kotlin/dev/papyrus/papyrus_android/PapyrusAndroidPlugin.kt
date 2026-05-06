@@ -1,16 +1,21 @@
 package dev.papyrus.papyrus_android
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.CookieManager
 import android.webkit.ConsoleMessage
 import android.webkit.DownloadListener
 import android.webkit.PermissionRequest
+import android.webkit.WebStorage
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -48,6 +53,16 @@ private data class PapyrusAndroidResourceDecision(
     val response: PapyrusAndroidInlineResource? = null,
 )
 
+private data class PapyrusAndroidNavigationPolicy(
+    val defaultDecision: String = "block",
+    val allowedSchemes: Set<String> = setOf("https"),
+    val externalSchemes: Set<String> = setOf("http", "https", "mailto", "tel"),
+    val blockedSchemes: Set<String> = setOf("javascript", "data", "file"),
+    val requireUserGestureForExternalOpen: Boolean = true,
+    val allowMainFrameNavigation: Boolean = false,
+    val allowSubFrameNavigation: Boolean = false,
+)
+
 class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private lateinit var channel: MethodChannel
     private lateinit var appContext: Context
@@ -57,6 +72,9 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private var progress: Double = 0.0
     private var resourceResolverEnabled = false
     private var resourcePolicy = PapyrusAndroidResourcePolicy()
+    private var navigationPolicy = PapyrusAndroidNavigationPolicy()
+    private var currentConfiguration: Map<*, *> = emptyMap<Any, Any>()
+    private val appInitiatedNavigations = mutableSetOf<String>()
     private val virtualResources = mutableMapOf<String, PapyrusAndroidInlineResource>()
 
     private companion object {
@@ -78,6 +96,8 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         channel.setMethodCallHandler(null)
         destroyWebView(webView)
         webView = null
+        currentConfiguration = emptyMap<Any, Any>()
+        appInitiatedNavigations.clear()
         pendingLoad = null
         virtualResources.clear()
         resourceResolverEnabled = false
@@ -91,7 +111,16 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     result.success(null)
                 }
                 "load" -> {
-                    load(call.arguments as? Map<*, *> ?: emptyMap<Any, Any>())
+                    val request = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+                    if (!isLoadAllowed(request)) {
+                        result.error(
+                            "navigationBlocked",
+                            "File loading is disabled by the current Papyrus security policy.",
+                            request["absolutePath"] ?: request["uri"],
+                        )
+                        return
+                    }
+                    load(request)
                     result.success(null)
                 }
                 "reload" -> { webView?.reload(); result.success(null) }
@@ -109,12 +138,21 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 "captureSnapshot" -> captureSnapshot(result)
                 "printDocument" -> { printDocument(call.arguments as? Map<*, *>); result.success(null) }
                 "clearCache" -> { webView?.clearCache(true); result.success(null) }
-                "clearStorage" -> { webView?.clearHistory(); result.success(null) }
+                "clearStorage" -> {
+                    webView?.clearHistory()
+                    WebStorage.getInstance().deleteAllData()
+                    val cookieManager = CookieManager.getInstance()
+                    cookieManager.removeAllCookies(null)
+                    cookieManager.flush()
+                    result.success(null)
+                }
                 "setResourceResolverEnabled" -> {
                     resourceResolverEnabled = call.arguments == true
                     result.success(null)
                 }
                 "dispose" -> {
+                    currentConfiguration = emptyMap<Any, Any>()
+                    appInitiatedNavigations.clear()
                     destroyWebView(webView)
                     webView = null
                     pendingLoad = null
@@ -132,9 +170,11 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     @SuppressLint("SetJavaScriptEnabled")
     internal fun createWebView(config: Map<*, *>): WebView {
+        currentConfiguration = config
         resourceResolverEnabled = config["resourceResolverEnabled"] as? Boolean ?: resourceResolverEnabled
         val view = WebView(appContext)
         resourcePolicy = resourcePolicyFromConfig(config)
+        navigationPolicy = navigationPolicyFromConfig(config)
         configureWebView(view, config)
         destroyWebView(webView)
         webView = view
@@ -167,17 +207,39 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView(view: WebView, config: Map<*, *>) {
         val allowJavaScript = config["allowJavaScript"] == true
+        val allowFileAccess = config["allowFileAccess"] == true
         val allowTextSelection = config["allowTextSelection"] != false
         val allowContextMenu = config["allowContextMenu"] != false
         val allowLongPress = config["allowLongPress"] != false
+        val localStorageEnabled = config["localStorage"] as? String == "enabled"
+        val cacheMode = config["cacheMode"] as? String ?: "defaultMode"
+        val cookiePolicy = config["cookiePolicy"] as? String ?: "block"
         val enableLongPress = allowLongPress && allowTextSelection && allowContextMenu
         view.settings.javaScriptEnabled = allowJavaScript
         view.settings.javaScriptCanOpenWindowsAutomatically = config["allowPopups"] == true
-        view.settings.allowFileAccess = config["allowFileAccess"] == true
-        view.settings.allowContentAccess = config["allowFileAccess"] == true
-        view.settings.domStorageEnabled = config["ephemeral"] != true
+        view.settings.allowFileAccess = allowFileAccess
+        view.settings.allowContentAccess = allowFileAccess
+        view.settings.domStorageEnabled = localStorageEnabled
+        @Suppress("DEPRECATION")
+        run {
+            view.settings.databaseEnabled = localStorageEnabled
+        }
         view.settings.setSupportZoom(config["zoomEnabled"] != false)
-        view.settings.cacheMode = WebSettings.LOAD_DEFAULT
+        view.settings.setSupportMultipleWindows(config["allowPopups"] == true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+            val allowUniversalAccess = config["allowUniversalAccessFromFileUrls"] == true
+            view.settings.allowFileAccessFromFileURLs = allowUniversalAccess
+            view.settings.allowUniversalAccessFromFileURLs = allowUniversalAccess
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            view.settings.mediaPlaybackRequiresUserGesture =
+                config["requireMediaUserGesture"] != false
+        }
+        view.settings.cacheMode = when (cacheMode) {
+            "noCache" -> WebSettings.LOAD_NO_CACHE
+            "cacheOnly" -> WebSettings.LOAD_CACHE_ONLY
+            else -> WebSettings.LOAD_DEFAULT
+        }
         view.isLongClickable = enableLongPress
         view.isHapticFeedbackEnabled = enableLongPress
         view.setOnLongClickListener(
@@ -192,10 +254,28 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 if (config["allowMixedContent"] == true) WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 else WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            WebView.setWebContentsDebuggingEnabled(config["debuggingEnabled"] == true)
+        }
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.setAcceptCookie(cookiePolicy != "block")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            cookieManager.setAcceptThirdPartyCookies(view, cookiePolicy == "allow")
+        }
         view.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 channel.invokeMethod("navigationRequest", request.url.toString())
-                return false
+                if (request.isForMainFrame && consumeAppInitiatedNavigation(request.url)) {
+                    return false
+                }
+                return when (navigationDecisionFor(request)) {
+                    "allow" -> false
+                    "openExternally" -> {
+                        openExternally(request.url)
+                        true
+                    }
+                    else -> true
+                }
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -265,15 +345,34 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private fun load(request: Map<*, *>, view: WebView) {
         when (request["type"]) {
-            "html" -> view.loadDataWithBaseURL(
-                request["baseUri"] as? String,
-                request["html"] as? String ?: "",
-                "text/html",
-                "utf-8",
-                null
-            )
-            "uri" -> view.loadUrl(request["uri"] as? String ?: "")
-            "file" -> view.loadUrl("file://${request["absolutePath"]}")
+            "html" -> {
+                val baseUri = request["baseUri"] as? String
+                if (!baseUri.isNullOrEmpty()) {
+                    markAppInitiatedNavigation(baseUri)
+                }
+                view.loadDataWithBaseURL(
+                    baseUri,
+                    request["html"] as? String ?: "",
+                    "text/html",
+                    "utf-8",
+                    null
+                )
+            }
+            "uri" -> {
+                val uri = request["uri"] as? String ?: ""
+                markAppInitiatedNavigation(uri)
+                val headers = stringMap(request["headers"])
+                if (headers.isEmpty()) {
+                    view.loadUrl(uri)
+                } else {
+                    view.loadUrl(uri, headers)
+                }
+            }
+            "file" -> {
+                val uri = "file://${request["absolutePath"]}"
+                markAppInitiatedNavigation(uri)
+                view.loadUrl(uri)
+            }
             "data" -> view.loadData(request["bytes"].toString(), request["mimeType"] as? String ?: "text/plain", "utf-8")
         }
     }
@@ -347,6 +446,23 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         )
     }
 
+    private fun navigationPolicyFromConfig(config: Map<*, *>): PapyrusAndroidNavigationPolicy {
+        return PapyrusAndroidNavigationPolicy(
+            defaultDecision = config["navigationDefaultDecision"] as? String ?: "block",
+            allowedSchemes = stringSet(config["navigationAllowedSchemes"]).ifEmpty { setOf("https") },
+            externalSchemes = stringSet(config["navigationExternalSchemes"]).ifEmpty {
+                setOf("http", "https", "mailto", "tel")
+            },
+            blockedSchemes = stringSet(config["navigationBlockedSchemes"]).ifEmpty {
+                setOf("javascript", "data", "file")
+            },
+            requireUserGestureForExternalOpen =
+                config["requireUserGestureForExternalOpen"] as? Boolean ?: true,
+            allowMainFrameNavigation = config["allowMainFrameNavigation"] as? Boolean ?: false,
+            allowSubFrameNavigation = config["allowSubFrameNavigation"] as? Boolean ?: false,
+        )
+    }
+
     private fun updateVirtualResources(request: Map<*, *>) {
         virtualResources.clear()
         val resources = request["virtualResources"] as? List<*> ?: return
@@ -416,6 +532,70 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 )
             }
             else -> PapyrusAndroidResourceDecision(action = "block")
+        }
+    }
+
+    private fun navigationDecisionFor(request: WebResourceRequest): String {
+        val scheme = request.url.scheme?.lowercase() ?: ""
+        if (navigationPolicy.blockedSchemes.contains(scheme)) {
+            return "block"
+        }
+        if (request.isForMainFrame && !navigationPolicy.allowMainFrameNavigation) {
+            return navigationPolicy.defaultDecision
+        }
+        if (!request.isForMainFrame && !navigationPolicy.allowSubFrameNavigation) {
+            return "block"
+        }
+        if (navigationPolicy.allowedSchemes.contains(scheme)) {
+            return "allow"
+        }
+        if (navigationPolicy.externalSchemes.contains(scheme)) {
+            if (navigationPolicy.requireUserGestureForExternalOpen && !requestHasUserGesture(request)) {
+                return "block"
+            }
+            return "openExternally"
+        }
+        return navigationPolicy.defaultDecision
+    }
+
+    private fun requestHasUserGesture(request: WebResourceRequest): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            request.hasGesture()
+        } else {
+            false
+        }
+    }
+
+    private fun markAppInitiatedNavigation(uri: String) {
+        if (uri.isNotEmpty()) {
+            appInitiatedNavigations.add(uri)
+        }
+    }
+
+    private fun consumeAppInitiatedNavigation(uri: Uri): Boolean {
+        return appInitiatedNavigations.remove(uri.toString())
+    }
+
+    private fun isLoadAllowed(request: Map<*, *>): Boolean {
+        return when (request["type"] as? String) {
+            "file" -> currentConfiguration["allowFileAccess"] == true
+            "uri" -> {
+                val uri = request["uri"] as? String ?: return true
+                !(uri.startsWith("file://") && currentConfiguration["allowFileAccess"] != true)
+            }
+            else -> true
+        }
+    }
+
+    private fun openExternally(uri: Uri) {
+        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            if (intent.resolveActivity(appContext.packageManager) != null) {
+                appContext.startActivity(intent)
+            }
+        } catch (_: ActivityNotFoundException) {
         }
     }
 
