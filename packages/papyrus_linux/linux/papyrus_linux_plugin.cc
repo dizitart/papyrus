@@ -35,6 +35,19 @@ typedef struct {
   FlMethodCall* method_call;
 } PapyrusLinuxMethodInvocation;
 
+typedef struct {
+  WebKitPolicyDecision* decision;
+  gchar* uri;
+  gchar* fallback_decision;
+} PapyrusLinuxNavigationInvocation;
+
+static const gchar* const kDefaultNavigationAllowedSchemes[] = {
+    "https", nullptr};
+static const gchar* const kDefaultNavigationExternalSchemes[] = {
+    "http", "https", "mailto", "tel", nullptr};
+static const gchar* const kDefaultNavigationBlockedSchemes[] = {
+    "javascript", "data", "file", nullptr};
+
 static void papyrus_linux_inline_resource_free(
     PapyrusLinuxInlineResource* resource) {
   if (resource == nullptr) {
@@ -72,6 +85,19 @@ static void papyrus_linux_method_invocation_free(
   if (invocation->method_call != nullptr) {
     g_object_unref(invocation->method_call);
   }
+  g_free(invocation);
+}
+
+static void papyrus_linux_navigation_invocation_free(
+    PapyrusLinuxNavigationInvocation* invocation) {
+  if (invocation == nullptr) {
+    return;
+  }
+  if (invocation->decision != nullptr) {
+    g_object_unref(invocation->decision);
+  }
+  g_clear_pointer(&invocation->uri, g_free);
+  g_clear_pointer(&invocation->fallback_decision, g_free);
   g_free(invocation);
 }
 
@@ -298,6 +324,14 @@ static void papyrus_linux_resource_method_response_cb(GObject* object,
 static void papyrus_linux_uri_scheme_request_cb(
     WebKitURISchemeRequest* request,
     gpointer user_data);
+static gboolean papyrus_linux_decide_policy_cb(
+  WebKitWebView* web_view,
+  WebKitPolicyDecision* decision,
+  WebKitPolicyDecisionType decision_type,
+  gpointer user_data);
+static void papyrus_linux_navigation_method_response_cb(GObject* object,
+                            GAsyncResult* result,
+                            gpointer user_data);
 static void papyrus_linux_selected_text_cb(GObject* object,
                        GAsyncResult* result,
                        gpointer user_data);
@@ -311,11 +345,20 @@ struct _PapyrusLinuxPlugin {
   GtkWidget* overlay;
   GtkWidget* fixed;
   WebKitWebView* web_view;
+  WebKitWebContext* web_context;
   gboolean allow_file_access;
   gboolean navigation_resolver_enabled;
   gboolean resource_resolver_enabled;
+  gboolean require_user_gesture_for_external_open;
+  gboolean allow_main_frame_navigation;
+  gboolean allow_sub_frame_navigation;
   gboolean visible;
+  gchar* navigation_default_decision;
   gchar* virtual_resource_scheme;
+  GHashTable* app_initiated_navigations;
+  GHashTable* navigation_allowed_schemes;
+  GHashTable* navigation_external_schemes;
+  GHashTable* navigation_blocked_schemes;
   GHashTable* virtual_resources;
   GHashTable* registered_schemes;
   double last_x;
@@ -350,6 +393,46 @@ static const gchar* fl_value_lookup_string_or_null(FlValue* map,
   return fl_value_get_string(value);
 }
 
+static void string_set_assign_defaults(GHashTable* set,
+                                       const gchar* const* defaults) {
+  g_hash_table_remove_all(set);
+  for (const gchar* const* value = defaults;
+       value != nullptr && *value != nullptr; ++value) {
+    g_hash_table_insert(set, g_ascii_strdown(*value, -1),
+                        GINT_TO_POINTER(TRUE));
+  }
+}
+
+static void string_set_assign(GHashTable* set,
+                              FlValue* value,
+                              const gchar* const* defaults) {
+  g_hash_table_remove_all(set);
+  gboolean has_values = FALSE;
+  if (value != nullptr && fl_value_get_type(value) == FL_VALUE_TYPE_LIST) {
+    const size_t length = fl_value_get_length(value);
+    for (size_t index = 0; index < length; ++index) {
+      FlValue* entry = fl_value_get_list_value(value, index);
+      if (entry == nullptr || fl_value_get_type(entry) != FL_VALUE_TYPE_STRING) {
+        continue;
+      }
+      has_values = TRUE;
+      g_hash_table_insert(set, g_ascii_strdown(fl_value_get_string(entry), -1),
+                          GINT_TO_POINTER(TRUE));
+    }
+  }
+  if (!has_values) {
+    string_set_assign_defaults(set, defaults);
+  }
+}
+
+static gboolean string_set_contains(GHashTable* set, const gchar* value) {
+  if (set == nullptr || value == nullptr) {
+    return FALSE;
+  }
+  g_autofree gchar* lowered = g_ascii_strdown(value, -1);
+  return g_hash_table_contains(set, lowered);
+}
+
 static gboolean fl_value_lookup_string_equals(FlValue* map,
                                               const gchar* key,
                                               const gchar* expected) {
@@ -373,6 +456,208 @@ static double fl_value_lookup_double(FlValue* map, const gchar* key,
     return static_cast<double>(fl_value_get_int(value));
   }
   return fallback;
+}
+
+static void update_navigation_policy(PapyrusLinuxPlugin* self, FlValue* config) {
+  if (config == nullptr || fl_value_get_type(config) != FL_VALUE_TYPE_MAP) {
+    return;
+  }
+  g_free(self->navigation_default_decision);
+  self->navigation_default_decision = g_strdup(
+      fl_value_lookup_string_or_null(config, "navigationDefaultDecision") != nullptr
+          ? fl_value_lookup_string_or_null(config, "navigationDefaultDecision")
+          : "block");
+  string_set_assign(self->navigation_allowed_schemes,
+                    fl_value_lookup_string(config, "navigationAllowedSchemes"),
+                    kDefaultNavigationAllowedSchemes);
+  string_set_assign(self->navigation_external_schemes,
+                    fl_value_lookup_string(config, "navigationExternalSchemes"),
+                    kDefaultNavigationExternalSchemes);
+  string_set_assign(self->navigation_blocked_schemes,
+                    fl_value_lookup_string(config, "navigationBlockedSchemes"),
+                    kDefaultNavigationBlockedSchemes);
+  self->require_user_gesture_for_external_open = fl_value_lookup_bool(
+      config, "requireUserGestureForExternalOpen",
+      self->require_user_gesture_for_external_open);
+  self->allow_main_frame_navigation =
+      fl_value_lookup_bool(config, "allowMainFrameNavigation",
+                           self->allow_main_frame_navigation);
+  self->allow_sub_frame_navigation =
+      fl_value_lookup_bool(config, "allowSubFrameNavigation",
+                           self->allow_sub_frame_navigation);
+}
+
+static void mark_app_initiated_navigation(PapyrusLinuxPlugin* self,
+                                          const gchar* uri) {
+  if (uri == nullptr || uri[0] == '\0') {
+    return;
+  }
+  g_hash_table_insert(self->app_initiated_navigations, g_strdup(uri),
+                      GINT_TO_POINTER(TRUE));
+}
+
+static gboolean consume_app_initiated_navigation(PapyrusLinuxPlugin* self,
+                                                 const gchar* uri) {
+  return uri != nullptr &&
+         g_hash_table_remove(self->app_initiated_navigations, uri);
+}
+
+static const gchar* navigation_type_name(WebKitNavigationAction* action) {
+  if (action == nullptr) {
+    return "other";
+  }
+  switch (webkit_navigation_action_get_navigation_type(action)) {
+    case WEBKIT_NAVIGATION_TYPE_LINK_CLICKED:
+      return "linkClicked";
+    case WEBKIT_NAVIGATION_TYPE_FORM_SUBMITTED:
+    case WEBKIT_NAVIGATION_TYPE_FORM_RESUBMITTED:
+      return "formSubmitted";
+    case WEBKIT_NAVIGATION_TYPE_BACK_FORWARD:
+      return "backForward";
+    case WEBKIT_NAVIGATION_TYPE_RELOAD:
+      return "reload";
+    default:
+      return webkit_navigation_action_is_user_gesture(action) ? "other"
+                                                              : "programmatic";
+  }
+}
+
+static gboolean navigation_is_main_frame(
+    WebKitNavigationAction* action,
+    WebKitPolicyDecisionType decision_type) {
+  if (decision_type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION) {
+    return TRUE;
+  }
+  const gchar* frame_name =
+      action == nullptr ? nullptr : webkit_navigation_action_get_frame_name(action);
+  return frame_name == nullptr || frame_name[0] == '\0';
+}
+
+static const gchar* navigation_decision_for(PapyrusLinuxPlugin* self,
+                                            const gchar* uri,
+                                            gboolean is_main_frame,
+                                            gboolean has_user_gesture) {
+  g_autoptr(GUri) parsed_uri = g_uri_parse(uri, G_URI_FLAGS_NONE, nullptr);
+  const gchar* scheme =
+      parsed_uri == nullptr ? nullptr : g_uri_get_scheme(parsed_uri);
+  if (string_set_contains(self->navigation_blocked_schemes, scheme)) {
+    return "block";
+  }
+  if (is_main_frame && !self->allow_main_frame_navigation) {
+    return self->navigation_default_decision;
+  }
+  if (!is_main_frame && !self->allow_sub_frame_navigation) {
+    return "block";
+  }
+  if (string_set_contains(self->navigation_allowed_schemes, scheme)) {
+    return "allow";
+  }
+  if (string_set_contains(self->navigation_external_schemes, scheme)) {
+    if (self->require_user_gesture_for_external_open && !has_user_gesture) {
+      return "block";
+    }
+    return "openExternally";
+  }
+  return self->navigation_default_decision;
+}
+
+static void open_externally(const gchar* uri) {
+  if (uri == nullptr || uri[0] == '\0') {
+    return;
+  }
+  g_app_info_launch_default_for_uri(uri, nullptr, nullptr);
+}
+
+static void apply_navigation_decision(WebKitPolicyDecision* decision,
+                                      const gchar* uri,
+                                      const gchar* action) {
+  if (g_strcmp0(action, "allow") == 0) {
+    webkit_policy_decision_use(decision);
+    return;
+  }
+  if (g_strcmp0(action, "download") == 0) {
+    webkit_policy_decision_download(decision);
+    return;
+  }
+  if (g_strcmp0(action, "openExternally") == 0) {
+    open_externally(uri);
+  }
+  webkit_policy_decision_ignore(decision);
+}
+
+static FlValue* navigation_arguments(const gchar* uri,
+                                     gboolean is_main_frame,
+                                     WebKitNavigationAction* action) {
+  g_autoptr(FlValue) arguments = fl_value_new_map();
+  fl_value_set_string_take(arguments, "uri",
+                           fl_value_new_string(uri == nullptr ? "" : uri));
+  fl_value_set_string_take(arguments, "isMainFrame",
+                           fl_value_new_bool(is_main_frame));
+  fl_value_set_string_take(arguments, "navigationType",
+                           fl_value_new_string(navigation_type_name(action)));
+  fl_value_set_string_take(arguments, "hasUserGesture",
+                           fl_value_new_bool(action != nullptr &&
+                                             webkit_navigation_action_is_user_gesture(
+                                                 action)));
+  return fl_value_ref(arguments);
+}
+
+static WebKitCookieAcceptPolicy cookie_accept_policy_for_config(FlValue* config) {
+  const gchar* cookie_policy =
+      fl_value_lookup_string_or_null(config, "cookiePolicy");
+  if (g_strcmp0(cookie_policy, "allow") == 0) {
+    return WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS;
+  }
+  if (g_strcmp0(cookie_policy, "allowByHost") == 0) {
+    return WEBKIT_COOKIE_POLICY_ACCEPT_NO_THIRD_PARTY;
+  }
+  return WEBKIT_COOKIE_POLICY_ACCEPT_NEVER;
+}
+
+static WebKitCacheModel cache_model_for_config(FlValue* config) {
+  const gchar* cache_mode = fl_value_lookup_string_or_null(config, "cacheMode");
+  if (g_strcmp0(cache_mode, "noCache") == 0) {
+    return WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER;
+  }
+  if (g_strcmp0(cache_mode, "cacheOnly") == 0) {
+    return WEBKIT_CACHE_MODEL_DOCUMENT_BROWSER;
+  }
+  return WEBKIT_CACHE_MODEL_WEB_BROWSER;
+}
+
+static void apply_storage_policy(PapyrusLinuxPlugin* self,
+                                 FlValue* config,
+                                 WebKitSettings* settings) {
+  const gboolean local_storage_enabled =
+      g_strcmp0(fl_value_lookup_string_or_null(config, "localStorage"),
+                "enabled") == 0;
+  webkit_settings_set_enable_html5_local_storage(settings,
+                                                 local_storage_enabled);
+  if (self->web_context == nullptr) {
+    return;
+  }
+  webkit_web_context_set_cache_model(self->web_context,
+                                     cache_model_for_config(config));
+  WebKitCookieManager* cookie_manager =
+      webkit_web_context_get_cookie_manager(self->web_context);
+  if (cookie_manager != nullptr) {
+    webkit_cookie_manager_set_accept_policy(
+        cookie_manager, cookie_accept_policy_for_config(config));
+  }
+}
+
+static void clear_website_data(PapyrusLinuxPlugin* self,
+                               WebKitWebsiteDataTypes data_types) {
+  if (self->web_context == nullptr) {
+    return;
+  }
+  WebKitWebsiteDataManager* manager =
+      webkit_web_context_get_website_data_manager(self->web_context);
+  if (manager == nullptr) {
+    return;
+  }
+  webkit_website_data_manager_clear(manager, data_types, 0, nullptr, nullptr,
+                                    nullptr);
 }
 
 static void ensure_virtual_scheme_registered(PapyrusLinuxPlugin* self,
@@ -457,6 +742,7 @@ static void ensure_overlay_container(PapyrusLinuxPlugin* self) {
 
 static void ensure_web_view(PapyrusLinuxPlugin* self, FlValue* config) {
   update_virtual_resource_scheme(self, config);
+  update_navigation_policy(self, config);
   self->allow_file_access = fl_value_lookup_bool(config, "allowFileAccess",
                                                  self->allow_file_access);
   self->resource_resolver_enabled =
@@ -466,8 +752,9 @@ static void ensure_web_view(PapyrusLinuxPlugin* self, FlValue* config) {
     return;
   }
   ensure_overlay_container(self);
-  WebKitWebContext* context = webkit_web_context_get_default();
-  ensure_virtual_scheme_registered(self, context, self->virtual_resource_scheme);
+  self->web_context = webkit_web_context_get_default();
+  ensure_virtual_scheme_registered(self, self->web_context,
+                                   self->virtual_resource_scheme);
   WebKitSettings* settings = webkit_settings_new();
   webkit_settings_set_enable_javascript(
       settings, fl_value_lookup_bool(config, "allowJavaScript", FALSE));
@@ -476,6 +763,7 @@ static void ensure_web_view(PapyrusLinuxPlugin* self, FlValue* config) {
   webkit_settings_set_enable_write_console_messages_to_stdout(settings, FALSE);
   webkit_settings_set_enable_developer_extras(
       settings, fl_value_lookup_bool(config, "debuggingEnabled", FALSE));
+  apply_storage_policy(self, config, settings);
   if (fl_value_lookup_string_equals(config, "hardwareAcceleration",
                                     "software")) {
     webkit_settings_set_hardware_acceleration_policy(
@@ -489,9 +777,12 @@ static void ensure_web_view(PapyrusLinuxPlugin* self, FlValue* config) {
   WebKitUserContentManager* content_manager = webkit_user_content_manager_new();
   self->web_view = WEBKIT_WEB_VIEW(g_object_new(
       WEBKIT_TYPE_WEB_VIEW, "settings", settings, "user-content-manager",
-    content_manager, "web-context", context, nullptr));
+      content_manager, "web-context", self->web_context, nullptr));
   g_object_unref(settings);
   g_object_unref(content_manager);
+
+  g_signal_connect(self->web_view, "decide-policy",
+                   G_CALLBACK(papyrus_linux_decide_policy_cb), self);
 
   if (self->fixed != nullptr) {
     gtk_container_add(GTK_CONTAINER(self->fixed), GTK_WIDGET(self->web_view));
@@ -587,11 +878,15 @@ static void load_request(PapyrusLinuxPlugin* self, FlValue* request) {
   if (strcmp(type, "html") == 0) {
     const gchar* html = fl_value_lookup_string_or_null(request, "html");
     const gchar* base_uri = fl_value_lookup_string_or_null(request, "baseUri");
+    if (base_uri != nullptr) {
+      mark_app_initiated_navigation(self, base_uri);
+    }
     webkit_web_view_load_html(self->web_view, html == nullptr ? "" : html,
                               base_uri);
   } else if (strcmp(type, "uri") == 0) {
     const gchar* uri = fl_value_lookup_string_or_null(request, "uri");
     if (uri != nullptr) {
+      mark_app_initiated_navigation(self, uri);
       webkit_web_view_load_uri(self->web_view, uri);
     }
   } else if (strcmp(type, "file") == 0) {
@@ -599,6 +894,7 @@ static void load_request(PapyrusLinuxPlugin* self, FlValue* request) {
     if (path != nullptr) {
       g_autofree gchar* uri = g_filename_to_uri(path, nullptr, nullptr);
       if (uri != nullptr) {
+        mark_app_initiated_navigation(self, uri);
         webkit_web_view_load_uri(self->web_view, uri);
       }
     }
@@ -777,6 +1073,81 @@ static void papyrus_linux_uri_scheme_request_cb(
                                   invocation);
 }
 
+static void papyrus_linux_navigation_method_response_cb(GObject* object,
+                                                        GAsyncResult* result,
+                                                        gpointer user_data) {
+  auto* invocation = static_cast<PapyrusLinuxNavigationInvocation*>(user_data);
+  g_autoptr(GError) error = nullptr;
+  g_autoptr(FlMethodResponse) response = fl_method_channel_invoke_method_finish(
+      FL_METHOD_CHANNEL(object), result, &error);
+
+  const gchar* decision_name = invocation->fallback_decision;
+  if (error == nullptr && response != nullptr &&
+      FL_IS_METHOD_SUCCESS_RESPONSE(response)) {
+    FlValue* value = fl_method_success_response_get_result(
+        FL_METHOD_SUCCESS_RESPONSE(response));
+    const gchar* candidate = fl_value_lookup_string_or_null(value, "decision");
+    if (candidate != nullptr) {
+      decision_name = candidate;
+    }
+  }
+
+  apply_navigation_decision(invocation->decision, invocation->uri,
+                            decision_name);
+  papyrus_linux_navigation_invocation_free(invocation);
+}
+
+static gboolean papyrus_linux_decide_policy_cb(
+    WebKitWebView* web_view,
+    WebKitPolicyDecision* decision,
+    WebKitPolicyDecisionType decision_type,
+    gpointer user_data) {
+  PapyrusLinuxPlugin* self = PAPYRUS_LINUX_PLUGIN(user_data);
+  if (decision_type != WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION &&
+      decision_type != WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION) {
+    return FALSE;
+  }
+
+  auto* navigation_decision = WEBKIT_NAVIGATION_POLICY_DECISION(decision);
+  WebKitNavigationAction* action =
+      webkit_navigation_policy_decision_get_navigation_action(
+          navigation_decision);
+  WebKitURIRequest* request =
+      action == nullptr ? nullptr : webkit_navigation_action_get_request(action);
+  const gchar* uri =
+      request == nullptr ? nullptr : webkit_uri_request_get_uri(request);
+  if (uri == nullptr || uri[0] == '\0') {
+    return FALSE;
+  }
+
+  const gboolean is_main_frame = navigation_is_main_frame(action, decision_type);
+  if (is_main_frame && consume_app_initiated_navigation(self, uri)) {
+    webkit_policy_decision_use(decision);
+    return TRUE;
+  }
+
+  const gboolean has_user_gesture =
+      action != nullptr && webkit_navigation_action_is_user_gesture(action);
+  const gchar* fallback_decision =
+      navigation_decision_for(self, uri, is_main_frame, has_user_gesture);
+  if (!self->navigation_resolver_enabled || self->channel == nullptr) {
+    apply_navigation_decision(decision, uri, fallback_decision);
+    return TRUE;
+  }
+
+  auto* invocation = g_new0(PapyrusLinuxNavigationInvocation, 1);
+  invocation->decision = WEBKIT_POLICY_DECISION(g_object_ref(decision));
+  invocation->uri = g_strdup(uri);
+  invocation->fallback_decision = g_strdup(fallback_decision);
+
+  g_autoptr(FlValue) arguments = navigation_arguments(uri, is_main_frame, action);
+  fl_method_channel_invoke_method(self->channel, "navigationRequest", arguments,
+                                  nullptr,
+                                  papyrus_linux_navigation_method_response_cb,
+                                  invocation);
+  return TRUE;
+}
+
 static void papyrus_linux_plugin_handle_method_call(
     PapyrusLinuxPlugin* self, FlMethodCall* method_call) {
   g_autoptr(FlMethodResponse) response = nullptr;
@@ -797,8 +1168,8 @@ static void papyrus_linux_plugin_handle_method_call(
           "navigationBlocked",
           "File loading is disabled by the current Papyrus security policy.");
     } else {
-    load_request(self, args);
-    response = success_null();
+      load_request(self, args);
+      response = success_null();
     }
   } else if (strcmp(method, "reload") == 0) {
     if (self->web_view != nullptr) webkit_web_view_reload(self->web_view);
@@ -867,16 +1238,26 @@ static void papyrus_linux_plugin_handle_method_call(
     response = error_response("unsupportedPlatformFeature",
                               "Printing is not consistently supported by "
                               "the Linux WebKitGTK backend.");
-  } else if (strcmp(method, "clearCache") == 0 ||
-             strcmp(method, "clearStorage") == 0 ||
-             strcmp(method, "dispose") == 0) {
+  } else if (strcmp(method, "clearCache") == 0) {
+    clear_website_data(
+        self, static_cast<WebKitWebsiteDataTypes>(
+                  WEBKIT_WEBSITE_DATA_MEMORY_CACHE |
+                  WEBKIT_WEBSITE_DATA_DISK_CACHE));
+    response = success_null();
+  } else if (strcmp(method, "clearStorage") == 0) {
+    clear_website_data(self, WEBKIT_WEBSITE_DATA_ALL);
+    response = success_null();
+  } else if (strcmp(method, "dispose") == 0) {
     if (strcmp(method, "dispose") == 0 && self->web_view != nullptr) {
       gtk_widget_destroy(GTK_WIDGET(self->web_view));
       self->web_view = nullptr;
+      self->web_context = nullptr;
       self->visible = FALSE;
       self->last_width = 0;
       self->last_height = 0;
+      g_hash_table_remove_all(self->app_initiated_navigations);
       g_hash_table_remove_all(self->virtual_resources);
+      self->navigation_resolver_enabled = FALSE;
       self->resource_resolver_enabled = FALSE;
     }
     response = success_null();
@@ -912,6 +1293,7 @@ static void papyrus_linux_plugin_dispose(GObject* object) {
   if (self->web_view != nullptr) {
     gtk_widget_destroy(GTK_WIDGET(self->web_view));
     self->web_view = nullptr;
+    self->web_context = nullptr;
     self->visible = FALSE;
   }
   if (self->channel != nullptr) {
@@ -930,6 +1312,23 @@ static void papyrus_linux_plugin_dispose(GObject* object) {
     g_hash_table_unref(self->registered_schemes);
     self->registered_schemes = nullptr;
   }
+  if (self->app_initiated_navigations != nullptr) {
+    g_hash_table_unref(self->app_initiated_navigations);
+    self->app_initiated_navigations = nullptr;
+  }
+  if (self->navigation_allowed_schemes != nullptr) {
+    g_hash_table_unref(self->navigation_allowed_schemes);
+    self->navigation_allowed_schemes = nullptr;
+  }
+  if (self->navigation_external_schemes != nullptr) {
+    g_hash_table_unref(self->navigation_external_schemes);
+    self->navigation_external_schemes = nullptr;
+  }
+  if (self->navigation_blocked_schemes != nullptr) {
+    g_hash_table_unref(self->navigation_blocked_schemes);
+    self->navigation_blocked_schemes = nullptr;
+  }
+  g_clear_pointer(&self->navigation_default_decision, g_free);
   g_clear_pointer(&self->virtual_resource_scheme, g_free);
   G_OBJECT_CLASS(papyrus_linux_plugin_parent_class)->dispose(object);
 }
@@ -944,11 +1343,30 @@ static void papyrus_linux_plugin_init(PapyrusLinuxPlugin* self) {
   self->overlay = nullptr;
   self->fixed = nullptr;
   self->web_view = nullptr;
+    self->web_context = nullptr;
   self->allow_file_access = FALSE;
   self->navigation_resolver_enabled = FALSE;
   self->resource_resolver_enabled = FALSE;
+    self->require_user_gesture_for_external_open = TRUE;
+    self->allow_main_frame_navigation = FALSE;
+    self->allow_sub_frame_navigation = FALSE;
   self->visible = FALSE;
+    self->navigation_default_decision = g_strdup("block");
   self->virtual_resource_scheme = g_strdup(kDefaultVirtualResourceScheme);
+    self->app_initiated_navigations =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    self->navigation_allowed_schemes =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    self->navigation_external_schemes =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    self->navigation_blocked_schemes =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    string_set_assign_defaults(self->navigation_allowed_schemes,
+                 kDefaultNavigationAllowedSchemes);
+    string_set_assign_defaults(self->navigation_external_schemes,
+                 kDefaultNavigationExternalSchemes);
+    string_set_assign_defaults(self->navigation_blocked_schemes,
+                 kDefaultNavigationBlockedSchemes);
   self->virtual_resources = g_hash_table_new_full(
       g_str_hash, g_str_equal, g_free,
       reinterpret_cast<GDestroyNotify>(papyrus_linux_inline_resource_free));

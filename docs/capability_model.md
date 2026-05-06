@@ -51,9 +51,11 @@ Current status:
 
 - Already exposed in the model: `PapyrusNavigationPolicy`,
   `PapyrusNavigationRequest`, `onNavigationRequest`.
-- Under-enforced: most native backends still serialize only a small subset of
-  navigation policy and do not yet apply the full scheme/gesture/frame policy
-  contract.
+- Partially enforced: Apple, Android, Linux, and Windows now apply pre-commit
+  navigation decisions and host callbacks for the shared scheme/gesture policy,
+  but Linux and Windows still need host-native conformance validation and the
+  Linux backend uses a conservative frame-target heuristic instead of a perfect
+  main-frame/sub-frame signal.
 
 ### 3. Resource and Network Policy
 
@@ -112,8 +114,10 @@ Current status:
 
 - Already exposed in the model: `PapyrusStoragePolicy`, `clearCache`,
   `clearStorage`.
-- Under-enforced: cookie/local-storage/cache/partition settings are not wired
-  uniformly across native backends.
+- Partially enforced: Android, Apple, and Linux now apply meaningful
+  cookie/local-storage/cache knobs, and Windows now clears real profile data,
+  but ephemeral sessions and partitioned persistence are not wired uniformly
+  across native backends yet.
 
 ### 6. Security and Permission Policy
 
@@ -264,10 +268,11 @@ The current repository has three concrete gaps:
   for text selection, long-press suppression, and context-menu replacement is
   not uniform yet.
 
-2. Many existing policy fields are model-only.
-   `PapyrusSecurityPolicy`, `PapyrusNavigationPolicy`, `PapyrusStoragePolicy`,
-   `PapyrusMediaPolicy`, and parts of `PapyrusDisplayPolicy` define knobs that
-   are not yet serialized or enforced uniformly by native backends.
+2. Several existing policy fields are still only partially enforced.
+  `PapyrusSecurityPolicy`, `PapyrusNavigationPolicy`, `PapyrusStoragePolicy`,
+  `PapyrusMediaPolicy`, and parts of `PapyrusDisplayPolicy` are now broadly
+  serialized, but backend enforcement is still uneven in the remaining
+  desktop-specific and advanced-policy paths.
 
 3. Conformance coverage is incomplete.
    The repository has strong baseline conformance work for loading,

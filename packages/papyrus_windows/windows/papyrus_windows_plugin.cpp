@@ -404,6 +404,166 @@ void UnsupportedWebView2(
                 "Microsoft Edge WebView2 Runtime is not available. Install "
                 "the WebView2 Runtime to render Papyrus on Windows.");
 }
+
+const flutter::EncodableValue* FindValue(const flutter::EncodableMap& map,
+                                         const char* key) {
+  auto iterator = map.find(flutter::EncodableValue(key));
+  return iterator == map.end() ? nullptr : &iterator->second;
+}
+
+std::string Lowercase(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) {
+                   return static_cast<char>(std::tolower(c));
+                 });
+  return value;
+}
+
+std::unordered_set<std::string> StringSetFromValue(
+    const flutter::EncodableValue* value,
+    std::initializer_list<const char*> defaults) {
+  std::unordered_set<std::string> result;
+  const auto* list = ListFromValue(value);
+  if (list != nullptr) {
+    for (const auto& entry : *list) {
+      if (const auto* string_value = std::get_if<std::string>(&entry)) {
+        result.insert(Lowercase(*string_value));
+      }
+    }
+  }
+  if (!result.empty()) {
+    return result;
+  }
+  for (const char* entry : defaults) {
+    result.insert(entry);
+  }
+  return result;
+}
+
+std::string UriScheme(const std::string& uri) {
+  const size_t separator = uri.find(':');
+  if (separator == std::string::npos) {
+    return std::string();
+  }
+  return Lowercase(uri.substr(0, separator));
+}
+
+std::string NavigationDecisionFor(const flutter::EncodableMap& configuration,
+                                  const std::string& uri,
+                                  bool is_main_frame,
+                                  bool has_user_gesture) {
+  const std::string scheme = UriScheme(uri);
+  const auto blocked_schemes = StringSetFromValue(
+      FindValue(configuration, "navigationBlockedSchemes"),
+      {"javascript", "data", "file"});
+  if (blocked_schemes.contains(scheme)) {
+    return "block";
+  }
+
+  const std::string default_decision =
+      StringFromValue(configuration, "navigationDefaultDecision").empty()
+          ? "block"
+          : StringFromValue(configuration, "navigationDefaultDecision");
+  if (is_main_frame && !BoolFromValue(configuration, "allowMainFrameNavigation", false)) {
+    return default_decision;
+  }
+  if (!is_main_frame &&
+      !BoolFromValue(configuration, "allowSubFrameNavigation", false)) {
+    return "block";
+  }
+
+  const auto allowed_schemes =
+      StringSetFromValue(FindValue(configuration, "navigationAllowedSchemes"),
+                         {"https"});
+  if (allowed_schemes.contains(scheme)) {
+    return "allow";
+  }
+
+  const auto external_schemes = StringSetFromValue(
+      FindValue(configuration, "navigationExternalSchemes"),
+      {"http", "https", "mailto", "tel"});
+  if (external_schemes.contains(scheme)) {
+    if (BoolFromValue(configuration, "requireUserGestureForExternalOpen", true) &&
+        !has_user_gesture) {
+      return "block";
+    }
+    return "openExternally";
+  }
+
+  return default_decision;
+}
+
+flutter::EncodableMap NavigationArgumentsFor(const std::string& uri,
+                                             bool is_main_frame,
+                                             const std::string& navigation_type,
+                                             bool has_user_gesture) {
+  return flutter::EncodableMap{
+      {flutter::EncodableValue("uri"), flutter::EncodableValue(uri)},
+      {flutter::EncodableValue("isMainFrame"),
+       flutter::EncodableValue(is_main_frame)},
+      {flutter::EncodableValue("navigationType"),
+       flutter::EncodableValue(navigation_type)},
+      {flutter::EncodableValue("hasUserGesture"),
+       flutter::EncodableValue(has_user_gesture)},
+  };
+}
+
+std::string NavigationDecisionFromResult(
+    const flutter::EncodableValue* result,
+    const std::string& fallback) {
+  const auto* map = MapFromValue(result);
+  if (map == nullptr) {
+    return fallback;
+  }
+  const std::string decision = StringFromValue(*map, "decision");
+  return decision.empty() ? fallback : decision;
+}
+
+std::string NavigationTypeForStartingEvent(bool is_user_initiated,
+                                           bool is_redirected) {
+  if (is_user_initiated) {
+    return "linkClicked";
+  }
+  if (is_redirected) {
+    return "programmatic";
+  }
+  return "other";
+}
+
+void OpenUriExternally(const std::wstring& uri) {
+  if (uri.empty()) {
+    return;
+  }
+  ShellExecuteW(nullptr, L"open", uri.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+void ClearBrowsingData(ICoreWebView2* webview,
+                       COREWEBVIEW2_BROWSING_DATA_KINDS kinds) {
+  if (webview == nullptr) {
+    return;
+  }
+
+  ComPtr<ICoreWebView2_13> webview13;
+  if (FAILED(webview->QueryInterface(IID_PPV_ARGS(&webview13))) || !webview13) {
+    return;
+  }
+
+  ComPtr<ICoreWebView2Profile> profile;
+  if (FAILED(webview13->get_Profile(&profile)) || !profile) {
+    return;
+  }
+
+  ComPtr<ICoreWebView2Profile2> profile2;
+  if (FAILED(profile.As(&profile2)) || !profile2) {
+    return;
+  }
+
+  profile2->ClearBrowsingData(
+      kinds,
+      Callback<ICoreWebView2ClearBrowsingDataCompletedHandler>(
+          [](HRESULT error_code) -> HRESULT { return S_OK; })
+          .Get());
+}
 }  // namespace
 
 void PapyrusWindowsPlugin::RegisterWithRegistrar(
@@ -444,6 +604,16 @@ PapyrusWindowsPlugin::~PapyrusWindowsPlugin() {
   if (registrar_ != nullptr && window_proc_delegate_id_ != 0) {
     registrar_->UnregisterTopLevelWindowProcDelegate(window_proc_delegate_id_);
   }
+  if (webview_ && navigation_starting_registered_) {
+    EventRegistrationToken token = {};
+    token.value = navigation_starting_token_value_;
+    webview_->remove_NavigationStarting(token);
+  }
+  if (webview_ && new_window_requested_registered_) {
+    EventRegistrationToken token = {};
+    token.value = new_window_requested_token_value_;
+    webview_->remove_NewWindowRequested(token);
+  }
   if (webview_ && web_resource_requested_registered_) {
     EventRegistrationToken token = {};
     token.value = web_resource_requested_token_value_;
@@ -475,6 +645,195 @@ bool PapyrusWindowsPlugin::RetryWithSoftwareFallback() {
   force_software_rendering_ = true;
   EnsureWebView();
   return true;
+}
+
+void PapyrusWindowsPlugin::MarkAppInitiatedNavigation(const std::string& uri) {
+  if (!uri.empty()) {
+    app_initiated_navigations_.insert(uri);
+  }
+}
+
+bool PapyrusWindowsPlugin::ConsumeAppInitiatedNavigation(
+    const std::string& uri) {
+  return !uri.empty() && app_initiated_navigations_.erase(uri) > 0;
+}
+
+void PapyrusWindowsPlugin::RegisterNavigationInterceptor() {
+  if (!webview_) {
+    return;
+  }
+
+  if (!navigation_starting_registered_) {
+    EventRegistrationToken token = {};
+    if (SUCCEEDED(webview_->add_NavigationStarting(
+            Callback<ICoreWebView2NavigationStartingEventHandler>(
+                [this](ICoreWebView2* sender,
+                       ICoreWebView2NavigationStartingEventArgs* args)
+                    -> HRESULT { return HandleNavigationStarting(args); })
+                .Get(),
+            &token))) {
+      navigation_starting_registered_ = true;
+      navigation_starting_token_value_ = token.value;
+    }
+  }
+
+  if (!new_window_requested_registered_) {
+    EventRegistrationToken token = {};
+    if (SUCCEEDED(webview_->add_NewWindowRequested(
+            Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+                [this](ICoreWebView2* sender,
+                       ICoreWebView2NewWindowRequestedEventArgs* args)
+                    -> HRESULT { return HandleNewWindowRequested(args); })
+                .Get(),
+            &token))) {
+      new_window_requested_registered_ = true;
+      new_window_requested_token_value_ = token.value;
+    }
+  }
+}
+
+HRESULT PapyrusWindowsPlugin::HandleNavigationStarting(
+    ICoreWebView2NavigationStartingEventArgs* args) {
+  if (!args) {
+    return S_OK;
+  }
+
+  LPWSTR raw_uri = nullptr;
+  if (FAILED(args->get_Uri(&raw_uri)) || raw_uri == nullptr) {
+    return S_OK;
+  }
+  std::wstring uri_wide(raw_uri);
+  CoTaskMemFree(raw_uri);
+  const std::string uri = WideToUtf8(uri_wide);
+  if (uri.empty()) {
+    return S_OK;
+  }
+
+  if (ConsumeAppInitiatedNavigation(uri)) {
+    current_uri_ = uri;
+    progress_ = 0.0;
+    return S_OK;
+  }
+
+  BOOL is_user_initiated = FALSE;
+  args->get_IsUserInitiated(&is_user_initiated);
+  BOOL is_redirected = FALSE;
+  args->get_IsRedirected(&is_redirected);
+  const std::string fallback = NavigationDecisionFor(
+      configuration_, uri, true, is_user_initiated == TRUE);
+  const auto apply_decision = [this, uri, uri_wide](const std::string& decision) {
+    if (decision == "allow") {
+      MarkAppInitiatedNavigation(uri);
+      current_uri_ = uri;
+      progress_ = 0.0;
+      if (webview_) {
+        webview_->Navigate(uri_wide.c_str());
+      }
+    } else if (decision == "openExternally") {
+      OpenUriExternally(uri_wide);
+    }
+  };
+
+  if (!navigation_resolver_enabled_ || !channel_) {
+    if (fallback == "allow") {
+      current_uri_ = uri;
+      progress_ = 0.0;
+      return S_OK;
+    }
+    args->put_Cancel(TRUE);
+    apply_decision(fallback);
+    return S_OK;
+  }
+
+  args->put_Cancel(TRUE);
+  const std::string navigation_type =
+      NavigationTypeForStartingEvent(is_user_initiated == TRUE,
+                                     is_redirected == TRUE);
+  channel_->InvokeMethod(
+      "navigationRequest",
+      std::make_unique<flutter::EncodableValue>(NavigationArgumentsFor(
+          uri, true, navigation_type, is_user_initiated == TRUE)),
+      std::make_unique<flutter::MethodResultFunctions<flutter::EncodableValue>>(
+          [apply_decision, fallback](const flutter::EncodableValue* result) {
+            apply_decision(NavigationDecisionFromResult(result, fallback));
+          },
+          [apply_decision, fallback](const std::string& error_code,
+                                     const std::string& error_message,
+                                     const flutter::EncodableValue* error_details) {
+            apply_decision(fallback);
+          },
+          [apply_decision, fallback]() { apply_decision(fallback); }));
+  return S_OK;
+}
+
+HRESULT PapyrusWindowsPlugin::HandleNewWindowRequested(
+    ICoreWebView2NewWindowRequestedEventArgs* args) {
+  if (!args) {
+    return S_OK;
+  }
+
+  LPWSTR raw_uri = nullptr;
+  if (FAILED(args->get_Uri(&raw_uri)) || raw_uri == nullptr) {
+    return S_OK;
+  }
+  std::wstring uri_wide(raw_uri);
+  CoTaskMemFree(raw_uri);
+  const std::string uri = WideToUtf8(uri_wide);
+  if (uri.empty()) {
+    return S_OK;
+  }
+
+  BOOL is_user_initiated = FALSE;
+  args->get_IsUserInitiated(&is_user_initiated);
+  const std::string fallback = NavigationDecisionFor(
+      configuration_, uri, true, is_user_initiated == TRUE);
+  const auto apply_decision = [this, uri, uri_wide](const std::string& decision) {
+    if (decision == "allow") {
+      MarkAppInitiatedNavigation(uri);
+      current_uri_ = uri;
+      progress_ = 0.0;
+      if (webview_) {
+        webview_->Navigate(uri_wide.c_str());
+      }
+    } else if (decision == "openExternally") {
+      OpenUriExternally(uri_wide);
+    }
+  };
+
+  args->put_Handled(TRUE);
+  if (!navigation_resolver_enabled_ || !channel_) {
+    apply_decision(fallback);
+    return S_OK;
+  }
+
+  ComPtr<ICoreWebView2Deferral> deferral;
+  if (FAILED(args->GetDeferral(&deferral)) || !deferral) {
+    apply_decision(fallback);
+    return S_OK;
+  }
+
+  channel_->InvokeMethod(
+      "navigationRequest",
+      std::make_unique<flutter::EncodableValue>(NavigationArgumentsFor(
+          uri, true, is_user_initiated == TRUE ? "linkClicked" : "programmatic",
+          is_user_initiated == TRUE)),
+      std::make_unique<flutter::MethodResultFunctions<flutter::EncodableValue>>(
+          [apply_decision, fallback, deferral](
+              const flutter::EncodableValue* result) {
+            apply_decision(NavigationDecisionFromResult(result, fallback));
+            deferral->Complete();
+          },
+          [apply_decision, fallback, deferral](const std::string& error_code,
+                                               const std::string& error_message,
+                                               const flutter::EncodableValue* error_details) {
+            apply_decision(fallback);
+            deferral->Complete();
+          },
+          [apply_decision, fallback, deferral]() {
+            apply_decision(fallback);
+            deferral->Complete();
+          }));
+  return S_OK;
 }
 
 void PapyrusWindowsPlugin::EnsureWebView() {
@@ -540,6 +899,7 @@ void PapyrusWindowsPlugin::EnsureWebView() {
                       }
                       controller_ = controller;
                       controller_->get_CoreWebView2(&webview_);
+                      RegisterNavigationInterceptor();
                       RegisterResourceInterceptor();
                       ApplySettings();
                       ApplyBounds();
@@ -792,12 +1152,16 @@ void PapyrusWindowsPlugin::LoadRequest(
   const std::string type = StringFromValue(request, "type");
   if (type == "uri") {
     current_uri_ = StringFromValue(request, "uri");
+    MarkAppInitiatedNavigation(current_uri_);
     webview_->Navigate(Utf8ToWide(current_uri_).c_str());
   } else if (type == "file") {
     current_uri_ = StringFromValue(request, "absolutePath");
-    webview_->Navigate(FileUriFromPath(current_uri_).c_str());
+    const std::wstring file_uri = FileUriFromPath(current_uri_);
+    MarkAppInitiatedNavigation(WideToUtf8(file_uri));
+    webview_->Navigate(file_uri.c_str());
   } else if (type == "html") {
     current_uri_ = StringFromValue(request, "baseUri");
+    MarkAppInitiatedNavigation(current_uri_);
     webview_->NavigateToString(Utf8ToWide(StringFromValue(request, "html")).c_str());
   }
   title_ = current_uri_.empty() ? "Papyrus Document" : current_uri_;
@@ -894,6 +1258,8 @@ void PapyrusWindowsPlugin::HandleMethodCall(
     if (args != nullptr) {
       configuration_ = *args;
     }
+    navigation_resolver_enabled_ =
+        BoolFromValue(configuration_, "navigationResolverEnabled", false);
     resource_resolver_enabled_ =
         BoolFromValue(configuration_, "resourceResolverEnabled", false);
     virtual_resource_scheme_ =
@@ -975,8 +1341,25 @@ void PapyrusWindowsPlugin::HandleMethodCall(
       }
     }
     result->Success();
-  } else if (method == "clearCache" || method == "clearStorage" ||
-             method == "printDocument") {
+  } else if (method == "clearCache") {
+    if (!webview2_available_) {
+      UnsupportedWebView2(std::move(result));
+      return;
+    }
+    ClearBrowsingData(webview_.Get(), COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE);
+    result->Success();
+  } else if (method == "clearStorage") {
+    if (!webview2_available_) {
+      UnsupportedWebView2(std::move(result));
+      return;
+    }
+    ClearBrowsingData(
+        webview_.Get(),
+        static_cast<COREWEBVIEW2_BROWSING_DATA_KINDS>(
+            COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE |
+            COREWEBVIEW2_BROWSING_DATA_KINDS_BROWSING_HISTORY));
+    result->Success();
+  } else if (method == "printDocument") {
     if (!webview2_available_) {
       UnsupportedWebView2(std::move(result));
       return;
@@ -989,8 +1372,26 @@ void PapyrusWindowsPlugin::HandleMethodCall(
     }
     result->Success();
   } else if (method == "setNavigationResolverEnabled") {
+    navigation_resolver_enabled_ = false;
+    if (const auto* enabled = std::get_if<bool>(method_call.arguments())) {
+      navigation_resolver_enabled_ = *enabled;
+    }
     result->Success();
   } else if (method == "dispose") {
+    if (webview_ && navigation_starting_registered_) {
+      EventRegistrationToken token = {};
+      token.value = navigation_starting_token_value_;
+      webview_->remove_NavigationStarting(token);
+      navigation_starting_registered_ = false;
+      navigation_starting_token_value_ = 0;
+    }
+    if (webview_ && new_window_requested_registered_) {
+      EventRegistrationToken token = {};
+      token.value = new_window_requested_token_value_;
+      webview_->remove_NewWindowRequested(token);
+      new_window_requested_registered_ = false;
+      new_window_requested_token_value_ = 0;
+    }
     if (webview_ && web_resource_requested_registered_) {
       EventRegistrationToken token = {};
       token.value = web_resource_requested_token_value_;
@@ -1009,7 +1410,9 @@ void PapyrusWindowsPlugin::HandleMethodCall(
     visible_ = false;
     force_software_rendering_ = false;
     software_fallback_attempted_ = false;
+    navigation_resolver_enabled_ = false;
     resource_resolver_enabled_ = false;
+    app_initiated_navigations_.clear();
     virtual_resources_.clear();
     current_uri_.clear();
     title_.clear();
@@ -1028,10 +1431,18 @@ void PapyrusWindowsPlugin::HandleMethodCall(
     }
     result->Success(flutter::EncodableValue(can_go_forward == TRUE));
   } else if (method == "currentUri") {
-    if (current_uri_.empty()) {
+    std::string current_uri = current_uri_;
+    if (webview_) {
+      LPWSTR raw_source = nullptr;
+      if (SUCCEEDED(webview_->get_Source(&raw_source)) && raw_source != nullptr) {
+        current_uri = WideToUtf8(raw_source);
+        CoTaskMemFree(raw_source);
+      }
+    }
+    if (current_uri.empty()) {
       result->Success(flutter::EncodableValue());
     } else {
-      result->Success(flutter::EncodableValue(current_uri_));
+      result->Success(flutter::EncodableValue(current_uri));
     }
   } else if (method == "title") {
     if (title_.empty()) {

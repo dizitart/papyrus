@@ -68,7 +68,7 @@ Recent live validation:
 - macOS print capability is still reported and covered contractually, but the live `printDocument` invocation is skipped in the portable suite because `WKWebView.printView` enters an interactive print flow under `flutter test`.
 - `loadData` remains contract-tested only. Native parity for live byte-data loading is not finished across all backends yet.
 - Linux and Windows have the new selected-text backend hooks, but that live interaction slice still needs host-native validation on those machines.
-- Linux and Windows now reject file-backed loads when `allowFileAccess` is false, but they still do not emit live navigation callbacks or enforce the full shared navigation policy at navigation-event time.
+- Linux and Windows now reject file-backed loads when `allowFileAccess` is false and route navigation through native pre-commit policy hooks, but those navigation and storage/privacy slices still need host-native live validation on Linux and Windows.
 
 ## Host Notes
 
