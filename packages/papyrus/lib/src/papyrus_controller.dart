@@ -102,6 +102,10 @@ class PapyrusController {
     return _platform.removeJavaScriptChannel(name);
   }
 
+  void setResourceResolver(PapyrusResourceResolver? resolver) {
+    _platform.setResourceResolver(resolver);
+  }
+
   Future<PapyrusContentSize> getContentSize() => _platform.getContentSize();
 
   Future<Uint8List> captureSnapshot({PapyrusSnapshotOptions? options}) {

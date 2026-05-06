@@ -5,16 +5,29 @@
 #include <flutter/plugin_registrar_windows.h>
 #include <wrl.h>
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 struct ICoreWebView2;
 struct ICoreWebView2Controller;
+struct ICoreWebView2CustomSchemeRegistration;
+struct ICoreWebView2Deferral;
 struct ICoreWebView2Environment;
 struct ICoreWebView2EnvironmentOptions;
+struct ICoreWebView2WebResourceRequestedEventArgs;
 
 namespace papyrus_windows {
+
+struct PapyrusWindowsInlineResource {
+    std::vector<uint8_t> bytes;
+    std::string mime_type = "application/octet-stream";
+    int status_code = 200;
+    std::map<std::string, std::string> headers;
+};
 
 class PapyrusWindowsPlugin : public flutter::Plugin {
  public:
@@ -40,19 +53,28 @@ class PapyrusWindowsPlugin : public flutter::Plugin {
   bool created_ = false;
   bool creating_ = false;
   bool visible_ = false;
+  bool resource_resolver_enabled_ = false;
+  bool web_resource_requested_registered_ = false;
   bool force_software_rendering_ = false;
   bool software_fallback_attempted_ = false;
   RECT bounds_ = {};
   HWND hwnd_ = nullptr;
   flutter::PluginRegistrarWindows* registrar_ = nullptr;
   int window_proc_delegate_id_ = 0;
+  int64_t web_resource_requested_token_value_ = 0;
   flutter::EncodableMap configuration_;
   flutter::EncodableMap pending_load_;
   std::string current_uri_;
   std::string title_;
+  std::string virtual_resource_scheme_ = "papyrus-resource";
   double progress_ = 0.0;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
+  std::unordered_map<std::string, PapyrusWindowsInlineResource>
+      virtual_resources_;
   Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment_;
   Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions> environment_options_;
+  Microsoft::WRL::ComPtr<ICoreWebView2CustomSchemeRegistration>
+      custom_scheme_registration_;
   Microsoft::WRL::ComPtr<ICoreWebView2Controller> controller_;
   Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
 
@@ -61,6 +83,10 @@ class PapyrusWindowsPlugin : public flutter::Plugin {
   void ApplySettings();
   void ApplyBounds();
   void RunPendingLoad();
+  void UpdateVirtualResources(const flutter::EncodableMap& request);
+  void RegisterResourceInterceptor();
+  HRESULT HandleResourceRequested(
+      ICoreWebView2WebResourceRequestedEventArgs* args);
   bool RetryWithSoftwareFallback();
   flutter::EncodableValue DebugOverlayState() const;
   void LoadRequest(const flutter::EncodableMap& request);

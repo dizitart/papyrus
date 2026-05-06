@@ -5,14 +5,20 @@
 #include <WebView2EnvironmentOptions.h>
 
 #include <flutter/method_channel.h>
+#include <flutter/method_result_functions.h>
 #include <flutter/plugin_registrar_windows.h>
 #include <flutter/standard_method_codec.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <cstring>
+#include <map>
 #include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 #include <wrl.h>
@@ -21,6 +27,8 @@ namespace papyrus_windows {
 namespace {
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
+
+constexpr char kDefaultVirtualResourceScheme[] = "papyrus-resource";
 
 std::string StringFromValue(const flutter::EncodableMap& map,
                             const char* key) {
@@ -66,6 +74,106 @@ double DoubleFromValue(const flutter::EncodableMap& map,
   return fallback;
 }
 
+const flutter::EncodableMap* MapFromValue(const flutter::EncodableValue* value) {
+  return value == nullptr ? nullptr
+                          : std::get_if<flutter::EncodableMap>(value);
+}
+
+const flutter::EncodableList* ListFromValue(const flutter::EncodableValue* value) {
+  return value == nullptr ? nullptr
+                          : std::get_if<flutter::EncodableList>(value);
+}
+
+std::string StringFromEncodableValue(const flutter::EncodableValue* value,
+                                     const std::string& fallback = "") {
+  if (value == nullptr) {
+    return fallback;
+  }
+  if (const auto* string_value = std::get_if<std::string>(value)) {
+    return *string_value;
+  }
+  return fallback;
+}
+
+int IntFromEncodableValue(const flutter::EncodableValue* value,
+                          int fallback = 0) {
+  if (value == nullptr) {
+    return fallback;
+  }
+  if (const auto* int32_value = std::get_if<int32_t>(value)) {
+    return *int32_value;
+  }
+  if (const auto* int64_value = std::get_if<int64_t>(value)) {
+    return static_cast<int>(*int64_value);
+  }
+  if (const auto* double_value = std::get_if<double>(value)) {
+    return static_cast<int>(*double_value);
+  }
+  return fallback;
+}
+
+std::vector<uint8_t> BytesFromValue(const flutter::EncodableValue* value) {
+  const auto* list = ListFromValue(value);
+  if (list == nullptr) {
+    return {};
+  }
+
+  std::vector<uint8_t> bytes;
+  bytes.reserve(list->size());
+  for (const auto& entry : *list) {
+    int element = IntFromEncodableValue(&entry, 0);
+    bytes.push_back(static_cast<uint8_t>(std::clamp(element, 0, 255)));
+  }
+  return bytes;
+}
+
+std::map<std::string, std::string> StringMapFromValue(
+    const flutter::EncodableValue* value) {
+  std::map<std::string, std::string> result;
+  const auto* map = MapFromValue(value);
+  if (map == nullptr) {
+    return result;
+  }
+
+  for (const auto& entry : *map) {
+    const auto* key = std::get_if<std::string>(&entry.first);
+    const auto* string_value = std::get_if<std::string>(&entry.second);
+    if (key == nullptr || string_value == nullptr) {
+      continue;
+    }
+    result[*key] = *string_value;
+  }
+  return result;
+}
+
+std::optional<PapyrusWindowsInlineResource> InlineResourceFromMap(
+    const flutter::EncodableMap* map) {
+  if (map == nullptr) {
+    return std::nullopt;
+  }
+
+  PapyrusWindowsInlineResource resource;
+  const auto bytes_iterator = map->find(flutter::EncodableValue("bytes"));
+  if (bytes_iterator != map->end()) {
+    resource.bytes = BytesFromValue(&bytes_iterator->second);
+  }
+  const auto mime_iterator = map->find(flutter::EncodableValue("mimeType"));
+  if (mime_iterator != map->end()) {
+    resource.mime_type =
+        StringFromEncodableValue(&mime_iterator->second, resource.mime_type);
+  }
+  const auto status_iterator =
+      map->find(flutter::EncodableValue("statusCode"));
+  if (status_iterator != map->end()) {
+    resource.status_code = IntFromEncodableValue(&status_iterator->second, 200);
+  }
+  const auto headers_iterator = map->find(flutter::EncodableValue("headers"));
+  if (headers_iterator != map->end()) {
+    resource.headers = StringMapFromValue(&headers_iterator->second);
+  }
+  return resource;
+}
+
 std::wstring Utf8ToWide(const std::string& value) {
   if (value.empty()) {
     return std::wstring();
@@ -78,6 +186,20 @@ std::wstring Utf8ToWide(const std::string& value) {
   return wide;
 }
 
+std::string WideToUtf8(const std::wstring& value) {
+  if (value.empty()) {
+    return std::string();
+  }
+  int size = WideCharToMultiByte(CP_UTF8, 0, value.c_str(),
+                                 static_cast<int>(value.size()), nullptr, 0,
+                                 nullptr, nullptr);
+  std::string utf8(size, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, value.c_str(),
+                      static_cast<int>(value.size()), utf8.data(), size,
+                      nullptr, nullptr);
+  return utf8;
+}
+
 std::wstring FileUriFromPath(const std::string& path) {
   std::wstring uri = L"file:///";
   std::wstring wide_path = Utf8ToWide(path);
@@ -85,6 +207,157 @@ std::wstring FileUriFromPath(const std::string& path) {
     uri.push_back(value == L'\\' ? L'/' : value);
   }
   return uri;
+}
+
+bool IsBuiltInScheme(const std::string& scheme) {
+  return scheme == "http" || scheme == "https" || scheme == "file" ||
+         scheme == "about" || scheme == "data" || scheme == "blob";
+}
+
+std::string SanitizeCustomScheme(const std::string& scheme) {
+  if (scheme.empty()) {
+    return kDefaultVirtualResourceScheme;
+  }
+  std::string trimmed = scheme;
+  trimmed.erase(trimmed.begin(),
+                std::find_if(trimmed.begin(), trimmed.end(), [](unsigned char c) {
+                  return !std::isspace(c);
+                }));
+  trimmed.erase(
+      std::find_if(trimmed.rbegin(), trimmed.rend(), [](unsigned char c) {
+        return !std::isspace(c);
+      }).base(),
+      trimmed.end());
+  if (trimmed.empty()) {
+    return kDefaultVirtualResourceScheme;
+  }
+  std::transform(trimmed.begin(), trimmed.end(), trimmed.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return trimmed;
+}
+
+std::string ReasonPhrase(int status_code) {
+  switch (status_code) {
+    case 200:
+      return "OK";
+    case 403:
+      return "Blocked";
+    case 404:
+      return "Not Found";
+    default:
+      return "Papyrus";
+  }
+}
+
+std::string ResourceTypeForUri(const std::string& uri, bool is_main_frame) {
+  if (is_main_frame) {
+    return "document";
+  }
+
+  std::string lower = uri;
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".css") == 0) {
+    return "stylesheet";
+  }
+  if ((lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".png") == 0) ||
+      (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".jpg") == 0) ||
+      (lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".jpeg") == 0) ||
+      (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".gif") == 0) ||
+      (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".svg") == 0) ||
+      (lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".webp") == 0)) {
+    return "image";
+  }
+  if ((lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".woff") == 0) ||
+      (lower.size() >= 6 && lower.compare(lower.size() - 6, 6, ".woff2") == 0) ||
+      (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".ttf") == 0)) {
+    return "font";
+  }
+  if (lower.size() >= 3 && lower.compare(lower.size() - 3, 3, ".js") == 0) {
+    return "script";
+  }
+  if ((lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".mp4") == 0) ||
+      (lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".webm") == 0) ||
+      (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".mp3") == 0) ||
+      (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".wav") == 0)) {
+    return "media";
+  }
+  return "other";
+}
+
+ComPtr<IStream> CreateMemoryStream(const std::vector<uint8_t>& bytes) {
+  const size_t allocation_size = std::max<size_t>(bytes.size(), 1);
+  HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE, allocation_size);
+  if (handle == nullptr) {
+    return nullptr;
+  }
+
+  void* buffer = GlobalLock(handle);
+  if (buffer == nullptr) {
+    GlobalFree(handle);
+    return nullptr;
+  }
+  if (!bytes.empty()) {
+    std::memcpy(buffer, bytes.data(), bytes.size());
+  }
+  GlobalUnlock(handle);
+
+  ComPtr<IStream> stream;
+  if (FAILED(CreateStreamOnHGlobal(handle, TRUE, &stream)) || !stream) {
+    GlobalFree(handle);
+    return nullptr;
+  }
+
+  ULARGE_INTEGER size = {};
+  size.QuadPart = bytes.size();
+  stream->SetSize(size);
+  LARGE_INTEGER start = {};
+  stream->Seek(start, STREAM_SEEK_SET, nullptr);
+  return stream;
+}
+
+std::wstring HeadersStringForResource(const PapyrusWindowsInlineResource& resource) {
+  std::wstringstream headers;
+  bool has_content_type = false;
+  for (const auto& entry : resource.headers) {
+    std::string key_lower = entry.first;
+    std::transform(key_lower.begin(), key_lower.end(), key_lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (key_lower == "content-type") {
+      has_content_type = true;
+    }
+    headers << Utf8ToWide(entry.first) << L": " << Utf8ToWide(entry.second)
+            << L"\r\n";
+  }
+  if (!has_content_type) {
+    headers << L"Content-Type: " << Utf8ToWide(resource.mime_type) << L"\r\n";
+  }
+  return headers.str();
+}
+
+ComPtr<ICoreWebView2WebResourceResponse> CreateWebResourceResponse(
+    ICoreWebView2Environment* environment,
+    const PapyrusWindowsInlineResource& resource) {
+  if (environment == nullptr) {
+    return nullptr;
+  }
+  ComPtr<IStream> stream = CreateMemoryStream(resource.bytes);
+  ComPtr<ICoreWebView2WebResourceResponse> response;
+  const std::wstring reason = Utf8ToWide(ReasonPhrase(resource.status_code));
+  const std::wstring headers = HeadersStringForResource(resource);
+  if (FAILED(environment->CreateWebResourceResponse(
+          stream.Get(), resource.status_code, reason.c_str(), headers.c_str(),
+          &response))) {
+    return nullptr;
+  }
+  return response;
+}
+
+PapyrusWindowsInlineResource StatusOnlyResource(int status_code) {
+  PapyrusWindowsInlineResource resource;
+  resource.status_code = status_code;
+  resource.mime_type = "text/plain";
+  return resource;
 }
 
 flutter::EncodableValue Capabilities(bool runtime_available) {
@@ -120,14 +393,13 @@ void UnsupportedWebView2(
 
 void PapyrusWindowsPlugin::RegisterWithRegistrar(
     flutter::PluginRegistrarWindows *registrar) {
-  auto channel =
+  auto plugin = std::make_unique<PapyrusWindowsPlugin>(registrar);
+  plugin->channel_ =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           registrar->messenger(), "dev.papyrus.papyrus_windows",
           &flutter::StandardMethodCodec::GetInstance());
 
-  auto plugin = std::make_unique<PapyrusWindowsPlugin>(registrar);
-
-  channel->SetMethodCallHandler(
+  plugin->channel_->SetMethodCallHandler(
       [plugin_pointer = plugin.get()](const auto &call, auto result) {
         plugin_pointer->HandleMethodCall(call, std::move(result));
       });
@@ -156,6 +428,11 @@ PapyrusWindowsPlugin::PapyrusWindowsPlugin(
 PapyrusWindowsPlugin::~PapyrusWindowsPlugin() {
   if (registrar_ != nullptr && window_proc_delegate_id_ != 0) {
     registrar_->UnregisterTopLevelWindowProcDelegate(window_proc_delegate_id_);
+  }
+  if (webview_ && web_resource_requested_registered_) {
+    EventRegistrationToken token = {};
+    token.value = web_resource_requested_token_value_;
+    webview_->remove_WebResourceRequested(token);
   }
   if (controller_) {
     controller_->Close();
@@ -190,15 +467,33 @@ void PapyrusWindowsPlugin::EnsureWebView() {
     return;
   }
   creating_ = true;
-  ICoreWebView2EnvironmentOptions* environment_options_ptr = nullptr;
   environment_options_.Reset();
-  if (StringFromValue(configuration_, "hardwareAcceleration") == "software" ||
-      force_software_rendering_) {
-    environment_options_ =
-        Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
-    environment_options_->put_AdditionalBrowserArguments(L"--disable-gpu");
-    environment_options_ptr = environment_options_.Get();
+  custom_scheme_registration_.Reset();
+  environment_options_ = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
+  if (environment_options_) {
+    if (StringFromValue(configuration_, "hardwareAcceleration") == "software" ||
+        force_software_rendering_) {
+      environment_options_->put_AdditionalBrowserArguments(L"--disable-gpu");
+    }
+    ComPtr<ICoreWebView2EnvironmentOptions4> environment_options4;
+    if (!IsBuiltInScheme(virtual_resource_scheme_) &&
+        SUCCEEDED(environment_options_.As(&environment_options4)) &&
+        environment_options4) {
+      custom_scheme_registration_ =
+          Microsoft::WRL::Make<CoreWebView2CustomSchemeRegistration>(
+              Utf8ToWide(virtual_resource_scheme_).c_str());
+      if (custom_scheme_registration_) {
+        custom_scheme_registration_->put_HasAuthorityComponent(TRUE);
+        custom_scheme_registration_->put_TreatAsSecure(TRUE);
+        ICoreWebView2CustomSchemeRegistration* registrations[] = {
+            custom_scheme_registration_.Get()};
+        environment_options4->SetCustomSchemeRegistrations(1, registrations);
+      }
+    }
   }
+
+  ICoreWebView2EnvironmentOptions* environment_options_ptr =
+      environment_options_.Get();
   HRESULT result = CreateCoreWebView2EnvironmentWithOptions(
       nullptr, nullptr, environment_options_ptr,
       Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
@@ -206,6 +501,7 @@ void PapyrusWindowsPlugin::EnsureWebView() {
               -> HRESULT {
             creating_ = false;
             environment_options_.Reset();
+            custom_scheme_registration_.Reset();
             if (FAILED(result) || environment == nullptr) {
               if (RetryWithSoftwareFallback()) {
                 return S_OK;
@@ -229,6 +525,7 @@ void PapyrusWindowsPlugin::EnsureWebView() {
                       }
                       controller_ = controller;
                       controller_->get_CoreWebView2(&webview_);
+                      RegisterResourceInterceptor();
                       ApplySettings();
                       ApplyBounds();
                       RunPendingLoad();
@@ -241,11 +538,172 @@ void PapyrusWindowsPlugin::EnsureWebView() {
   if (FAILED(result)) {
     creating_ = false;
     environment_options_.Reset();
+    custom_scheme_registration_.Reset();
     if (RetryWithSoftwareFallback()) {
       return;
     }
     webview2_available_ = false;
   }
+}
+
+void PapyrusWindowsPlugin::RegisterResourceInterceptor() {
+  if (!webview_ || web_resource_requested_registered_ ||
+      IsBuiltInScheme(virtual_resource_scheme_)) {
+    return;
+  }
+
+  const std::wstring filter = Utf8ToWide(virtual_resource_scheme_ + "://*");
+  if (FAILED(webview_->AddWebResourceRequestedFilter(
+          filter.c_str(), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL))) {
+    return;
+  }
+
+  EventRegistrationToken token = {};
+  if (FAILED(webview_->add_WebResourceRequested(
+          Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+              [this](ICoreWebView2* sender,
+                     ICoreWebView2WebResourceRequestedEventArgs* args)
+                  -> HRESULT { return HandleResourceRequested(args); })
+              .Get(),
+          &token))) {
+    return;
+  }
+
+  web_resource_requested_registered_ = true;
+  web_resource_requested_token_value_ = token.value;
+}
+
+HRESULT PapyrusWindowsPlugin::HandleResourceRequested(
+    ICoreWebView2WebResourceRequestedEventArgs* args) {
+  if (!args || !environment_) {
+    return S_OK;
+  }
+
+  ComPtr<ICoreWebView2WebResourceRequest> request;
+  if (FAILED(args->get_Request(&request)) || !request) {
+    return S_OK;
+  }
+
+  LPWSTR raw_uri = nullptr;
+  if (FAILED(request->get_Uri(&raw_uri)) || raw_uri == nullptr) {
+    return S_OK;
+  }
+  std::wstring uri_wide(raw_uri);
+  CoTaskMemFree(raw_uri);
+  const std::string uri = WideToUtf8(uri_wide);
+
+  const auto inline_resource = virtual_resources_.find(uri);
+  if (inline_resource != virtual_resources_.end()) {
+    ComPtr<ICoreWebView2WebResourceResponse> response =
+        CreateWebResourceResponse(environment_.Get(), inline_resource->second);
+    if (response) {
+      args->put_Response(response.Get());
+    }
+    return S_OK;
+  }
+
+  if (!resource_resolver_enabled_ || !channel_) {
+    PapyrusWindowsInlineResource response_resource = StatusOnlyResource(404);
+    ComPtr<ICoreWebView2WebResourceResponse> response =
+        CreateWebResourceResponse(environment_.Get(), response_resource);
+    if (response) {
+      args->put_Response(response.Get());
+    }
+    return S_OK;
+  }
+
+  ComPtr<ICoreWebView2Deferral> deferral;
+  if (FAILED(args->GetDeferral(&deferral)) || !deferral) {
+    PapyrusWindowsInlineResource response_resource = StatusOnlyResource(403);
+    ComPtr<ICoreWebView2WebResourceResponse> response =
+        CreateWebResourceResponse(environment_.Get(), response_resource);
+    if (response) {
+      args->put_Response(response.Get());
+    }
+    return S_OK;
+  }
+
+  LPWSTR raw_method = nullptr;
+  std::string method = "GET";
+  if (SUCCEEDED(request->get_Method(&raw_method)) && raw_method != nullptr) {
+    method = WideToUtf8(raw_method);
+    CoTaskMemFree(raw_method);
+  }
+
+  bool is_main_frame = false;
+  if (webview_) {
+    LPWSTR raw_source = nullptr;
+    if (SUCCEEDED(webview_->get_Source(&raw_source)) && raw_source != nullptr) {
+      is_main_frame = uri_wide == raw_source;
+      CoTaskMemFree(raw_source);
+    }
+  }
+
+  flutter::EncodableMap arguments = {
+      {flutter::EncodableValue("uri"), flutter::EncodableValue(uri)},
+      {flutter::EncodableValue("method"), flutter::EncodableValue(method)},
+      {flutter::EncodableValue("headers"),
+       flutter::EncodableValue(flutter::EncodableMap{})},
+      {flutter::EncodableValue("resourceType"),
+       flutter::EncodableValue(ResourceTypeForUri(uri, is_main_frame))},
+      {flutter::EncodableValue("isMainFrame"), flutter::EncodableValue(is_main_frame)},
+  };
+
+  ComPtr<ICoreWebView2Environment> environment = environment_;
+  ComPtr<ICoreWebView2WebResourceRequestedEventArgs> pending_args = args;
+  channel_->InvokeMethod(
+      "resourceRequest",
+      std::make_unique<flutter::EncodableValue>(std::move(arguments)),
+      std::make_unique<flutter::MethodResultFunctions<flutter::EncodableValue>>(
+          [environment, pending_args, deferral](const flutter::EncodableValue* result) {
+            PapyrusWindowsInlineResource response_resource = StatusOnlyResource(403);
+            const auto* map = MapFromValue(result);
+            const std::string decision =
+                map == nullptr ? std::string() : StringFromValue(*map, "decision");
+            if (decision == "respond") {
+              const auto response_iterator =
+                  map->find(flutter::EncodableValue("response"));
+              if (response_iterator != map->end()) {
+                if (const auto response_map =
+                        MapFromValue(&response_iterator->second)) {
+                  auto parsed_resource = InlineResourceFromMap(response_map);
+                  if (parsed_resource.has_value()) {
+                    response_resource = std::move(parsed_resource.value());
+                  }
+                }
+              }
+            } else if (decision == "allow") {
+              response_resource = StatusOnlyResource(404);
+            }
+
+            ComPtr<ICoreWebView2WebResourceResponse> response =
+                CreateWebResourceResponse(environment.Get(), response_resource);
+            if (response) {
+              pending_args->put_Response(response.Get());
+            }
+            deferral->Complete();
+          },
+          [environment, pending_args, deferral](const std::string& error_code,
+                                                const std::string& error_message,
+                                                const flutter::EncodableValue* error_details) {
+            PapyrusWindowsInlineResource response_resource = StatusOnlyResource(403);
+            ComPtr<ICoreWebView2WebResourceResponse> response =
+                CreateWebResourceResponse(environment.Get(), response_resource);
+            if (response) {
+              pending_args->put_Response(response.Get());
+            }
+            deferral->Complete();
+          },
+          [environment, pending_args, deferral]() {
+            PapyrusWindowsInlineResource response_resource = StatusOnlyResource(403);
+            ComPtr<ICoreWebView2WebResourceResponse> response =
+                CreateWebResourceResponse(environment.Get(), response_resource);
+            if (response) {
+              pending_args->put_Response(response.Get());
+            }
+            deferral->Complete();
+          }));
+  return S_OK;
 }
 
 void PapyrusWindowsPlugin::ApplySettings() {
@@ -308,6 +766,7 @@ flutter::EncodableValue PapyrusWindowsPlugin::DebugOverlayState() const {
 
 void PapyrusWindowsPlugin::LoadRequest(
     const flutter::EncodableMap& request) {
+  UpdateVirtualResources(request);
   if (!webview_) {
     pending_load_ = request;
     EnsureWebView();
@@ -328,6 +787,33 @@ void PapyrusWindowsPlugin::LoadRequest(
   title_ = current_uri_.empty() ? "Papyrus Document" : current_uri_;
   progress_ = 1.0;
   created_ = true;
+}
+
+void PapyrusWindowsPlugin::UpdateVirtualResources(
+    const flutter::EncodableMap& request) {
+  virtual_resources_.clear();
+  const auto iterator = request.find(flutter::EncodableValue("virtualResources"));
+  if (iterator == request.end()) {
+    return;
+  }
+
+  const auto* resources = ListFromValue(&iterator->second);
+  if (resources == nullptr) {
+    return;
+  }
+
+  for (const auto& entry : *resources) {
+    const auto* resource_map = MapFromValue(&entry);
+    if (resource_map == nullptr) {
+      continue;
+    }
+    const std::string uri = StringFromValue(*resource_map, "uri");
+    auto resource = InlineResourceFromMap(resource_map);
+    if (uri.empty() || !resource.has_value()) {
+      continue;
+    }
+    virtual_resources_[uri] = std::move(resource.value());
+  }
 }
 
 void PapyrusWindowsPlugin::SetViewport(
@@ -377,6 +863,10 @@ void PapyrusWindowsPlugin::HandleMethodCall(
     if (args != nullptr) {
       configuration_ = *args;
     }
+    resource_resolver_enabled_ =
+        BoolFromValue(configuration_, "resourceResolverEnabled", false);
+    virtual_resource_scheme_ =
+        SanitizeCustomScheme(StringFromValue(configuration_, "virtualResourceScheme"));
     software_fallback_attempted_ = false;
     force_software_rendering_ =
         StringFromValue(configuration_, "hardwareAcceleration") == "software";
@@ -455,7 +945,20 @@ void PapyrusWindowsPlugin::HandleMethodCall(
       return;
     }
     result->Success();
+  } else if (method == "setResourceResolverEnabled") {
+    resource_resolver_enabled_ = false;
+    if (const auto* enabled = std::get_if<bool>(method_call.arguments())) {
+      resource_resolver_enabled_ = *enabled;
+    }
+    result->Success();
   } else if (method == "dispose") {
+    if (webview_ && web_resource_requested_registered_) {
+      EventRegistrationToken token = {};
+      token.value = web_resource_requested_token_value_;
+      webview_->remove_WebResourceRequested(token);
+      web_resource_requested_registered_ = false;
+      web_resource_requested_token_value_ = 0;
+    }
     if (controller_) {
       controller_->put_IsVisible(FALSE);
       controller_->Close();
@@ -467,6 +970,8 @@ void PapyrusWindowsPlugin::HandleMethodCall(
     visible_ = false;
     force_software_rendering_ = false;
     software_fallback_attempted_ = false;
+    resource_resolver_enabled_ = false;
+    virtual_resources_.clear();
     current_uri_.clear();
     title_.clear();
     progress_ = 0.0;

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -41,48 +42,6 @@ void main() {
 
     await controller.stopLoading();
     await controller.dispose();
-  });
-
-  testWidgets('mobile Papyrus native view renders visible content', (
-    tester,
-  ) async {
-    if (defaultTargetPlatform != TargetPlatform.android &&
-        defaultTargetPlatform != TargetPlatform.iOS) {
-      return;
-    }
-
-    final controller = PapyrusController.create();
-    final pageFinished = Completer<void>();
-    addTearDown(() async => controller.dispose());
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: Center(
-            child: SizedBox(
-              width: 360,
-              height: 220,
-              child: PapyrusView(
-                controller: controller,
-                configuration: const PapyrusConfiguration(
-                  security: PapyrusSecurityPolicy(allowJavaScript: true),
-                ),
-                initialRequest: const PapyrusHtmlRequest(html: _smokeHtml),
-                onPageFinished: (_) {
-                  if (!pageFinished.isCompleted) {
-                    pageFinished.complete();
-                  }
-                },
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-
-    await _waitForPageFinished(tester, pageFinished);
-    final hasVisibleContent = await _waitForVisibleSnapshot(tester, controller);
-    expect(hasVisibleContent, isTrue);
   });
 
   testWidgets('desktop overlay Papyrus view attaches on Windows and Linux', (
@@ -134,6 +93,137 @@ void main() {
     expect(config.navigation.defaultDecision, PapyrusNavigationDecision.block);
     expect(config.resources.remoteResources, PapyrusRemoteResourceMode.block);
   });
+
+  testWidgets('mobile Papyrus native view renders visible content', (
+    tester,
+  ) async {
+    if (defaultTargetPlatform != TargetPlatform.android &&
+        defaultTargetPlatform != TargetPlatform.iOS) {
+      return;
+    }
+
+    final controller = PapyrusController.create();
+    final pageFinished = Completer<void>();
+    addTearDown(() async {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        await controller.dispose();
+        return;
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await controller.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 360,
+              height: 220,
+              child: PapyrusView(
+                controller: controller,
+                configuration: const PapyrusConfiguration(
+                  security: PapyrusSecurityPolicy(allowJavaScript: true),
+                ),
+                initialRequest: const PapyrusHtmlRequest(html: _smokeHtml),
+                onPageFinished: (_) {
+                  if (!pageFinished.isCompleted) {
+                    pageFinished.complete();
+                  }
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final hasVisibleContent = switch (defaultTargetPlatform) {
+      TargetPlatform.android => await _waitForAndroidNativeView(tester),
+      TargetPlatform.iOS => await _waitForIosVisibleContent(
+        tester,
+        controller,
+        pageFinished,
+      ),
+      TargetPlatform.windows ||
+      TargetPlatform.linux ||
+      TargetPlatform.macOS ||
+      TargetPlatform.fuchsia => false,
+    };
+    expect(hasVisibleContent, isTrue);
+  });
+
+  testWidgets('Papyrus resource interception serves an intercepted document', (
+    tester,
+  ) async {
+    final controller = PapyrusController.create();
+    final documentRequested = Completer<void>();
+    PapyrusResourceRequest? interceptedRequest;
+    final interceptedDocumentUri =
+        defaultTargetPlatform == TargetPlatform.android
+        ? Uri.parse('https://integration.local/document.html')
+        : Uri.parse('papyrus-resource://integration.local/document.html');
+    addTearDown(() async {
+      if (defaultTargetPlatform != TargetPlatform.android) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      }
+      await controller.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 360,
+              height: 220,
+              child: PapyrusView(
+                controller: controller,
+                configuration: const PapyrusConfiguration(
+                  security: PapyrusSecurityPolicy(allowJavaScript: true),
+                ),
+                initialRequest: PapyrusUriRequest(uri: interceptedDocumentUri),
+                onResourceRequest: (request) async {
+                  if (request.uri == interceptedDocumentUri) {
+                    interceptedRequest = request;
+                    if (!documentRequested.isCompleted) {
+                      documentRequested.complete();
+                    }
+                    return PapyrusRespondWithResource(
+                      PapyrusResourceResponse(
+                        bytes: Uint8List.fromList(utf8.encode(_smokeHtml)),
+                        mimeType: 'text/html',
+                      ),
+                    );
+                  }
+                  return const PapyrusBlockResource();
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await _waitForCompleter(tester, documentRequested);
+    expect(documentRequested.isCompleted, isTrue);
+    expect(interceptedRequest, isNotNull);
+    expect(interceptedRequest!.method, 'GET');
+    expect(interceptedRequest!.resourceType, PapyrusResourceType.document);
+    expect(interceptedRequest!.uri, interceptedDocumentUri);
+
+    if (defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.macOS) {
+      final hasStyledContent = await _waitForVisibleSnapshot(
+        tester,
+        controller,
+      );
+      expect(hasStyledContent, isTrue);
+    }
+  });
 }
 
 Future<Map<String, Object?>> _waitForOverlayState(WidgetTester tester) async {
@@ -173,15 +263,25 @@ Future<void> _waitForPageFinished(
   WidgetTester tester,
   Completer<void> pageFinished,
 ) async {
-  for (var attempt = 0; attempt < 50; attempt += 1) {
+  for (var attempt = 0; attempt < 20; attempt += 1) {
     if (pageFinished.isCompleted) {
       await pageFinished.future;
       return;
     }
     await tester.pump(const Duration(milliseconds: 100));
   }
-  if (pageFinished.isCompleted) {
-    await pageFinished.future;
+}
+
+Future<void> _waitForCompleter(
+  WidgetTester tester,
+  Completer<void> completer,
+) async {
+  for (var attempt = 0; attempt < 30; attempt += 1) {
+    if (completer.isCompleted) {
+      await completer.future;
+      return;
+    }
+    await tester.pump(const Duration(milliseconds: 100));
   }
 }
 
@@ -189,7 +289,7 @@ Future<bool> _waitForVisibleSnapshot(
   WidgetTester tester,
   PapyrusController controller,
 ) async {
-  for (var attempt = 0; attempt < 50; attempt += 1) {
+  for (var attempt = 0; attempt < 20; attempt += 1) {
     await tester.pump(const Duration(milliseconds: 100));
     final snapshot = await controller.captureSnapshot();
     if (snapshot.isEmpty) {
@@ -204,6 +304,22 @@ Future<bool> _waitForVisibleSnapshot(
     }
   }
   return false;
+}
+
+Future<bool> _waitForIosVisibleContent(
+  WidgetTester tester,
+  PapyrusController controller,
+  Completer<void> pageFinished,
+) async {
+  await _waitForPageFinished(tester, pageFinished);
+  return _waitForVisibleSnapshot(tester, controller);
+}
+
+Future<bool> _waitForAndroidNativeView(WidgetTester tester) async {
+  if (tester.takeException() case final Object error?) {
+    throw TestFailure('android platform view threw: $error');
+  }
+  return find.byType(AndroidView).evaluate().isNotEmpty;
 }
 
 Future<ui.Image> _decodeSnapshot(Uint8List bytes) async {

@@ -72,6 +72,8 @@ abstract class PapyrusPlatform {
 
   Future<void> removeJavaScriptChannel(String name) async {}
 
+  void setResourceResolver(PapyrusResourceResolver? resolver) {}
+
   Future<PapyrusContentSize> getContentSize() {
     throw const PapyrusException(
       PapyrusErrorCode.unsupportedPlatformFeature,

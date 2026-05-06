@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:papyrus_platform_interface/papyrus_platform_interface.dart';
 
@@ -6,9 +8,19 @@ class PapyrusAndroid extends PapyrusPlatform {
     : _channel = channel ?? const MethodChannel('dev.papyrus.papyrus_android');
 
   final MethodChannel _channel;
+  final StreamController<PapyrusEvent> _events =
+      StreamController<PapyrusEvent>.broadcast();
+  PapyrusResourceResolver? _resourceResolver;
+  bool _methodHandlerInstalled = false;
 
   static void registerWith() {
     PapyrusPlatform.instance = PapyrusAndroid();
+  }
+
+  @override
+  Stream<PapyrusEvent> get events {
+    _ensureMethodHandlerInstalled();
+    return _events.stream;
   }
 
   @override
@@ -18,13 +30,24 @@ class PapyrusAndroid extends PapyrusPlatform {
   String get viewType => 'dev.papyrus.papyrus_android/webview';
 
   @override
+  void setResourceResolver(PapyrusResourceResolver? resolver) {
+    _ensureMethodHandlerInstalled();
+    _resourceResolver = resolver;
+    unawaited(
+      _channel.invokeMethod<void>(
+        'setResourceResolverEnabled',
+        resolver != null,
+      ),
+    );
+  }
+
+  @override
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
   }) {
-    return _channel.invokeMethod<void>(
-      'create',
-      _configurationMap(configuration),
-    );
+    final config = _configurationMap(configuration);
+    config['resourceResolverEnabled'] = _resourceResolver != null;
+    return _channel.invokeMethod<void>('create', config);
   }
 
   @override
@@ -117,7 +140,7 @@ class PapyrusAndroid extends PapyrusPlatform {
     );
     return _capabilitiesFromMap(map) ??
         const PapyrusPlatformCapabilities(
-          supportsResourceInterception: true,
+          supportsResourceInterception: false,
           supportsVirtualSchemes: true,
           supportsEphemeralStorage: true,
           supportsPrint: true,
@@ -141,6 +164,17 @@ Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
   'autoHeight': configuration.display.autoHeight,
   'zoomEnabled': configuration.display.zoomEnabled,
   'textZoom': configuration.display.textZoom,
+  'virtualResourceScheme':
+      configuration.resources.virtualResourceOrigin?.scheme ??
+      'papyrus-resource',
+  'remoteResources': configuration.resources.remoteResources.name,
+  'allowedHosts': configuration.resources.allowedHosts.toList(),
+  'allowedSchemes': configuration.resources.allowedSchemes.toList(),
+  'blockedResourceTypes': configuration.resources.blockedResourceTypes
+      .map((type) => type.name)
+      .toList(),
+  'enableRequestInterception':
+      configuration.resources.enableRequestInterception,
   'debuggingEnabled': configuration.platform.debuggingEnabled,
   'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
 };
@@ -160,3 +194,55 @@ PapyrusPlatformCapabilities? _capabilitiesFromMap(Map<String, Object?>? map) {
         map['supportsPermissionInterception'] == true,
   );
 }
+
+extension on PapyrusAndroid {
+  void _ensureMethodHandlerInstalled() {
+    if (_methodHandlerInstalled) {
+      return;
+    }
+    _channel.setMethodCallHandler(_handleMethodCall);
+    _methodHandlerInstalled = true;
+  }
+
+  Future<Object?> _handleMethodCall(MethodCall call) async {
+    switch (call.method) {
+      case 'pageStarted':
+        _events.add(
+          PapyrusPageStartedEvent(uri: _tryParseUri(call.arguments as String?)),
+        );
+        return null;
+      case 'pageFinished':
+        _events.add(
+          PapyrusPageFinishedEvent(
+            uri: _tryParseUri(call.arguments as String?),
+          ),
+        );
+        return null;
+      case 'progress':
+        _events.add(
+          PapyrusProgressEvent((call.arguments as num?)?.toDouble() ?? 0),
+        );
+        return null;
+      case 'resourceRequest':
+        final request = PapyrusResourceRequest.fromMap(
+          _mapArguments(call.arguments),
+        );
+        final resolver = _resourceResolver;
+        final decision = resolver == null
+            ? const PapyrusAllowResource()
+            : await resolver(request);
+        return papyrusResourceDecisionToMap(decision);
+      default:
+        return null;
+    }
+  }
+}
+
+Map<Object?, Object?> _mapArguments(Object? arguments) {
+  if (arguments is Map<Object?, Object?>) {
+    return arguments;
+  }
+  return const {};
+}
+
+Uri? _tryParseUri(String? value) => value == null ? null : Uri.tryParse(value);

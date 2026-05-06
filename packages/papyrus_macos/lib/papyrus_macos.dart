@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:papyrus_platform_interface/papyrus_platform_interface.dart';
 
@@ -6,6 +8,10 @@ class PapyrusMacos extends PapyrusPlatform {
     : _channel = channel ?? const MethodChannel('dev.papyrus.papyrus_macos');
 
   final MethodChannel _channel;
+  final StreamController<PapyrusEvent> _events =
+      StreamController<PapyrusEvent>.broadcast();
+  PapyrusResourceResolver? _resourceResolver;
+  bool _methodHandlerInstalled = false;
   static const bool _forceDesktopOverlay = bool.fromEnvironment(
     'PAPYRUS_FORCE_DESKTOP_OVERLAY',
   );
@@ -20,6 +26,12 @@ class PapyrusMacos extends PapyrusPlatform {
   }
 
   @override
+  Stream<PapyrusEvent> get events {
+    _ensureMethodHandlerInstalled();
+    return _events.stream;
+  }
+
+  @override
   bool get supportsNativeView => !_preferDesktopOverlay;
 
   @override
@@ -29,9 +41,25 @@ class PapyrusMacos extends PapyrusPlatform {
   String get viewType => 'dev.papyrus.papyrus_macos/webview';
 
   @override
+  void setResourceResolver(PapyrusResourceResolver? resolver) {
+    _ensureMethodHandlerInstalled();
+    _resourceResolver = resolver;
+    unawaited(
+      _channel.invokeMethod<void>(
+        'setResourceResolverEnabled',
+        resolver != null,
+      ),
+    );
+  }
+
+  @override
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
-  }) => _channel.invokeMethod<void>('create', _configurationMap(configuration));
+  }) {
+    final config = _configurationMap(configuration);
+    config['resourceResolverEnabled'] = _resourceResolver != null;
+    return _channel.invokeMethod<void>('create', config);
+  }
 
   @override
   Future<void> setViewport({
@@ -155,6 +183,17 @@ Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
   'ephemeral': configuration.storage.ephemeral,
   'autoHeight': configuration.display.autoHeight,
   'zoomEnabled': configuration.display.zoomEnabled,
+  'virtualResourceScheme':
+      configuration.resources.virtualResourceOrigin?.scheme ??
+      'papyrus-resource',
+  'remoteResources': configuration.resources.remoteResources.name,
+  'allowedHosts': configuration.resources.allowedHosts.toList(),
+  'allowedSchemes': configuration.resources.allowedSchemes.toList(),
+  'blockedResourceTypes': configuration.resources.blockedResourceTypes
+      .map((type) => type.name)
+      .toList(),
+  'enableRequestInterception':
+      configuration.resources.enableRequestInterception,
   'desktopOverlay': PapyrusMacos._preferDesktopOverlay,
   'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
 };
@@ -174,3 +213,55 @@ PapyrusPlatformCapabilities? _capabilitiesFromMap(Map<String, Object?>? map) {
         map['supportsPermissionInterception'] == true,
   );
 }
+
+extension on PapyrusMacos {
+  void _ensureMethodHandlerInstalled() {
+    if (_methodHandlerInstalled) {
+      return;
+    }
+    _channel.setMethodCallHandler(_handleMethodCall);
+    _methodHandlerInstalled = true;
+  }
+
+  Future<Object?> _handleMethodCall(MethodCall call) async {
+    switch (call.method) {
+      case 'pageStarted':
+        _events.add(
+          PapyrusPageStartedEvent(uri: _tryParseUri(call.arguments as String?)),
+        );
+        return null;
+      case 'pageFinished':
+        _events.add(
+          PapyrusPageFinishedEvent(
+            uri: _tryParseUri(call.arguments as String?),
+          ),
+        );
+        return null;
+      case 'progress':
+        _events.add(
+          PapyrusProgressEvent((call.arguments as num?)?.toDouble() ?? 0),
+        );
+        return null;
+      case 'resourceRequest':
+        final request = PapyrusResourceRequest.fromMap(
+          _mapArguments(call.arguments),
+        );
+        final resolver = _resourceResolver;
+        final decision = resolver == null
+            ? const PapyrusAllowResource()
+            : await resolver(request);
+        return papyrusResourceDecisionToMap(decision);
+      default:
+        return null;
+    }
+  }
+}
+
+Map<Object?, Object?> _mapArguments(Object? arguments) {
+  if (arguments is Map<Object?, Object?>) {
+    return arguments;
+  }
+  return const {};
+}
+
+Uri? _tryParseUri(String? value) => value == null ? null : Uri.tryParse(value);

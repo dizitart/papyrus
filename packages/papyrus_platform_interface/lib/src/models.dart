@@ -631,6 +631,26 @@ class PapyrusResourceRequest {
   final Map<String, String> headers;
   final PapyrusResourceType resourceType;
   final bool isMainFrame;
+
+  JsonMap toMap() => {
+    'uri': uri.toString(),
+    'method': method,
+    'headers': headers,
+    'resourceType': resourceType.name,
+    'isMainFrame': isMainFrame,
+  };
+
+  static PapyrusResourceRequest fromMap(Map<Object?, Object?> map) {
+    return PapyrusResourceRequest(
+      uri: Uri.parse(map['uri'] as String? ?? ''),
+      method: map['method'] as String? ?? 'GET',
+      headers: _stringMapFromObject(map['headers']),
+      resourceType: _resourceTypeFromName(
+        map['resourceType'] as String? ?? PapyrusResourceType.other.name,
+      ),
+      isMainFrame: map['isMainFrame'] as bool? ?? false,
+    );
+  }
 }
 
 sealed class PapyrusResourceDecision {
@@ -651,6 +671,31 @@ class PapyrusRespondWithResource extends PapyrusResourceDecision {
   final PapyrusResourceResponse response;
 }
 
+JsonMap papyrusResourceDecisionToMap(PapyrusResourceDecision decision) {
+  return switch (decision) {
+    PapyrusAllowResource() => {'decision': 'allow'},
+    PapyrusBlockResource() => {'decision': 'block'},
+    PapyrusRespondWithResource(response: final response) => {
+      'decision': 'respond',
+      'response': response.toMap(),
+    },
+  };
+}
+
+PapyrusResourceDecision papyrusResourceDecisionFromMap(
+  Map<Object?, Object?> map,
+) {
+  return switch (map['decision'] as String? ?? 'allow') {
+    'block' => const PapyrusBlockResource(),
+    'respond' => PapyrusRespondWithResource(
+      PapyrusResourceResponse.fromMap(
+        map['response'] as Map<Object?, Object?>? ?? const {},
+      ),
+    ),
+    _ => const PapyrusAllowResource(),
+  };
+}
+
 class PapyrusResourceResponse {
   const PapyrusResourceResponse({
     required this.bytes,
@@ -663,6 +708,27 @@ class PapyrusResourceResponse {
   final String mimeType;
   final int statusCode;
   final Map<String, String> headers;
+
+  JsonMap toMap() => {
+    'bytes': bytes.toList(),
+    'mimeType': mimeType,
+    'statusCode': statusCode,
+    'headers': headers,
+  };
+
+  static PapyrusResourceResponse fromMap(Map<Object?, Object?> map) {
+    return PapyrusResourceResponse(
+      bytes: Uint8List.fromList(
+        ((map['bytes'] as List<Object?>?) ?? const <Object?>[])
+            .whereType<num>()
+            .map((value) => value.toInt())
+            .toList(),
+      ),
+      mimeType: map['mimeType'] as String? ?? 'application/octet-stream',
+      statusCode: (map['statusCode'] as num?)?.toInt() ?? 200,
+      headers: _stringMapFromObject(map['headers']),
+    );
+  }
 }
 
 abstract class PapyrusVirtualResourceProvider {
@@ -866,6 +932,22 @@ class PapyrusPlatformCapabilities {
     supportsDownloadInterception,
     supportsPermissionInterception,
   );
+}
+
+PapyrusResourceType _resourceTypeFromName(String name) {
+  return PapyrusResourceType.values.firstWhere(
+    (type) => type.name == name,
+    orElse: () => PapyrusResourceType.other,
+  );
+}
+
+Map<String, String> _stringMapFromObject(Object? value) {
+  if (value is Map<Object?, Object?>) {
+    return value.map(
+      (key, entry) => MapEntry(key?.toString() ?? '', entry?.toString() ?? ''),
+    );
+  }
+  return const {};
 }
 
 class PapyrusHtmlComposer {

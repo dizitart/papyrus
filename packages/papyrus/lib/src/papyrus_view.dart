@@ -65,6 +65,7 @@ class _PapyrusViewState extends State<PapyrusView> {
   void initState() {
     super.initState();
     widget.onCreated?.call(widget.controller);
+    widget.controller.setResourceResolver(widget.onResourceRequest);
     _subscription = widget.controller.events.listen(_handleEvent);
     if (_usesMethodChannelSurface) {
       _initializeMethodChannelSurface();
@@ -81,11 +82,17 @@ class _PapyrusViewState extends State<PapyrusView> {
     final initialRequestChanged =
         _requestSignature(oldWidget.initialRequest) !=
         _requestSignature(widget.initialRequest);
+    final resourceResolverChanged =
+        oldWidget.onResourceRequest != widget.onResourceRequest;
 
     if (controllerChanged) {
+      oldWidget.controller.setResourceResolver(null);
       unawaited(_subscription?.cancel());
+      widget.controller.setResourceResolver(widget.onResourceRequest);
       _subscription = widget.controller.events.listen(_handleEvent);
       widget.onCreated?.call(widget.controller);
+    } else if (resourceResolverChanged) {
+      widget.controller.setResourceResolver(widget.onResourceRequest);
     }
 
     if (controllerChanged || configurationChanged || initialRequestChanged) {
@@ -140,6 +147,7 @@ class _PapyrusViewState extends State<PapyrusView> {
   @override
   void dispose() {
     _subscription?.cancel();
+    widget.controller.setResourceResolver(null);
     if (PapyrusPlatform.instance.supportsOverlaySurface) {
       unawaited(
         widget.controller.setViewport(
@@ -170,7 +178,10 @@ class _PapyrusViewState extends State<PapyrusView> {
       return const _UnsupportedNativeView();
     }
 
-    final creationParams = _configurationMap(widget.configuration);
+    final creationParams = _configurationMap(
+      widget.configuration,
+      resourceResolverEnabled: widget.onResourceRequest != null,
+    );
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return AndroidView(
@@ -424,7 +435,10 @@ class _UnsupportedNativeView extends StatelessWidget {
   }
 }
 
-Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
+Map<String, Object?> _configurationMap(
+  PapyrusConfiguration configuration, {
+  bool resourceResolverEnabled = false,
+}) => {
   'allowJavaScript':
       configuration.security.allowJavaScript ||
       configuration.javascript.mode != PapyrusJavaScriptMode.disabled,
@@ -435,6 +449,18 @@ Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
   'autoHeight': configuration.display.autoHeight,
   'zoomEnabled': configuration.display.zoomEnabled,
   'textZoom': configuration.display.textZoom,
+  'virtualResourceScheme':
+      configuration.resources.virtualResourceOrigin?.scheme ??
+      'papyrus-resource',
+  'remoteResources': configuration.resources.remoteResources.name,
+  'allowedHosts': configuration.resources.allowedHosts.toList(),
+  'allowedSchemes': configuration.resources.allowedSchemes.toList(),
+  'blockedResourceTypes': configuration.resources.blockedResourceTypes
+      .map((type) => type.name)
+      .toList(),
+  'enableRequestInterception':
+      configuration.resources.enableRequestInterception,
+  'resourceResolverEnabled': resourceResolverEnabled,
   'debuggingEnabled': configuration.platform.debuggingEnabled,
   'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
 };

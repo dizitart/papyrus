@@ -2,6 +2,19 @@ import Cocoa
 import FlutterMacOS
 import WebKit
 
+private struct PapyrusMacosInlineResource {
+  let data: Data
+  let mimeType: String
+  let statusCode: Int
+  let headers: [String: String]
+}
+
+private enum PapyrusMacosResourceDecision {
+  case allow
+  case block
+  case respond(PapyrusMacosInlineResource)
+}
+
 public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WKUIDelegate {
   private var channel: FlutterMethodChannel?
   private weak var flutterView: NSView?
@@ -9,6 +22,11 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
   private var webView: WKWebView?
   private var pendingLoad: [String: Any]?
   private var pendingViewport: [String: Any]?
+  private var resourceResolverEnabled = false
+  private var virtualResources: [String: PapyrusMacosInlineResource] = [:]
+  private var virtualResourceScheme = "papyrus-resource"
+  private var cancelledResourceTasks = Set<ObjectIdentifier>()
+  private lazy var schemeHandler = PapyrusMacosSchemeHandler(plugin: self)
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "dev.papyrus.papyrus_macos", binaryMessenger: registrar.messenger)
@@ -75,6 +93,9 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
     case "clearCache", "clearStorage":
       WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: Date(timeIntervalSince1970: 0)) {}
       result(nil)
+    case "setResourceResolverEnabled":
+      resourceResolverEnabled = call.arguments as? Bool ?? false
+      result(nil)
     case "dispose":
       pendingLoad = nil
       pendingViewport = nil
@@ -82,6 +103,9 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
       webView = nil
       overlayContainer?.removeFromSuperview()
       overlayContainer = nil
+      virtualResources.removeAll()
+      cancelledResourceTasks.removeAll()
+      resourceResolverEnabled = false
       result(nil)
     case "getCapabilities":
       result(capabilities())
@@ -92,9 +116,14 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
 
   @discardableResult
   fileprivate func createWebView(config: [String: Any]) -> WKWebView {
+    virtualResourceScheme = sanitizeCustomScheme(config["virtualResourceScheme"] as? String)
+    resourceResolverEnabled = config["resourceResolverEnabled"] as? Bool ?? resourceResolverEnabled
     let webConfig = WKWebViewConfiguration()
     if config["ephemeral"] as? Bool == true {
       webConfig.websiteDataStore = .nonPersistent()
+    }
+    if let scheme = registeredVirtualResourceScheme {
+      webConfig.setURLSchemeHandler(schemeHandler, forURLScheme: scheme)
     }
     if #available(macOS 11.0, *) {
       let preferences = WKWebpagePreferences()
@@ -173,6 +202,7 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
   }
 
   private func load(request: [String: Any]) {
+    updateVirtualResources(from: request)
     guard let view = webView else {
       pendingLoad = request
       return
@@ -261,6 +291,192 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
     decisionHandler(.allow)
   }
 
+  fileprivate func startSchemeTask(_ task: WKURLSchemeTask) {
+    let identifier = ObjectIdentifier(task as AnyObject)
+    cancelledResourceTasks.remove(identifier)
+
+    guard let url = task.request.url else {
+      fail(task: task, description: "Missing resource URL.")
+      return
+    }
+
+    if let resource = virtualResources[url.absoluteString] {
+      respond(to: task, with: resource, url: url)
+      return
+    }
+
+    guard resourceResolverEnabled, let channel else {
+      fail(task: task, description: "Papyrus resource not found.", notFound: true)
+      return
+    }
+
+    channel.invokeMethod("resourceRequest", arguments: resourceArguments(for: task)) { [weak self] result in
+      self?.complete(task: task, url: url, result: result)
+    }
+  }
+
+  fileprivate func stopSchemeTask(_ task: WKURLSchemeTask) {
+    cancelledResourceTasks.insert(ObjectIdentifier(task as AnyObject))
+  }
+
+  private func complete(task: WKURLSchemeTask, url: URL, result: Any?) {
+    let identifier = ObjectIdentifier(task as AnyObject)
+    guard cancelledResourceTasks.remove(identifier) == nil else { return }
+
+    switch resourceDecision(from: result) {
+    case .respond(let resource):
+      respond(to: task, with: resource, url: url)
+    case .allow:
+      fail(task: task, description: "Papyrus resource not found.", notFound: true)
+    case .block:
+      fail(task: task, description: "Papyrus resource blocked.")
+    }
+  }
+
+  private func respond(to task: WKURLSchemeTask, with resource: PapyrusMacosInlineResource, url: URL) {
+    let identifier = ObjectIdentifier(task as AnyObject)
+    guard !cancelledResourceTasks.contains(identifier) else { return }
+
+    let response = httpResponse(for: url, resource: resource) ?? URLResponse(
+      url: url,
+      mimeType: resource.mimeType,
+      expectedContentLength: resource.data.count,
+      textEncodingName: textEncodingName(for: resource.mimeType)
+    )
+    task.didReceive(response)
+    task.didReceive(resource.data)
+    task.didFinish()
+  }
+
+  private func fail(task: WKURLSchemeTask, description: String, notFound: Bool = false) {
+    let identifier = ObjectIdentifier(task as AnyObject)
+    guard cancelledResourceTasks.remove(identifier) == nil else { return }
+
+    let code = notFound ? NSFileReadUnknownError : NSFileReadNoPermissionError
+    task.didFailWithError(
+      NSError(
+        domain: NSCocoaErrorDomain,
+        code: code,
+        userInfo: [NSLocalizedDescriptionKey: description]
+      )
+    )
+  }
+
+  private func resourceArguments(for task: WKURLSchemeTask) -> [String: Any] {
+    let request = task.request
+    let url = request.url?.absoluteString ?? ""
+    let headers = request.allHTTPHeaderFields ?? [:]
+    return [
+      "uri": url,
+      "method": request.httpMethod ?? "GET",
+      "headers": headers,
+      "resourceType": resourceType(for: request),
+      "isMainFrame": request.mainDocumentURL == request.url,
+    ]
+  }
+
+  private func resourceType(for request: URLRequest) -> String {
+    let accept = request.allHTTPHeaderFields?["Accept"]?.lowercased() ?? ""
+    let path = request.url?.path.lowercased() ?? ""
+    switch true {
+    case request.mainDocumentURL == request.url:
+      return "document"
+    case accept.contains("text/css") || path.hasSuffix(".css"):
+      return "stylesheet"
+    case accept.contains("image/") || path.hasSuffix(".png") || path.hasSuffix(".jpg") || path.hasSuffix(".jpeg") || path.hasSuffix(".gif") || path.hasSuffix(".svg") || path.hasSuffix(".webp"):
+      return "image"
+    case accept.contains("font/") || path.hasSuffix(".woff") || path.hasSuffix(".woff2") || path.hasSuffix(".ttf"):
+      return "font"
+    case accept.contains("javascript") || path.hasSuffix(".js"):
+      return "script"
+    case accept.contains("video/") || accept.contains("audio/"):
+      return "media"
+    default:
+      return "other"
+    }
+  }
+
+  private func resourceDecision(from result: Any?) -> PapyrusMacosResourceDecision {
+    guard
+      let map = result as? [String: Any],
+      let decision = map["decision"] as? String
+    else {
+      return .block
+    }
+
+    switch decision {
+    case "allow":
+      return .allow
+    case "respond":
+      guard let response = inlineResource(from: map["response"] as? [String: Any]) else {
+        return .block
+      }
+      return .respond(response)
+    default:
+      return .block
+    }
+  }
+
+  private func updateVirtualResources(from request: [String: Any]) {
+    virtualResources.removeAll()
+    guard let resources = request["virtualResources"] as? [[String: Any]] else {
+      return
+    }
+
+    for resource in resources {
+      guard let uri = resource["uri"] as? String, let inline = inlineResource(from: resource) else {
+        continue
+      }
+      virtualResources[uri] = inline
+    }
+  }
+
+  private func inlineResource(from map: [String: Any]?) -> PapyrusMacosInlineResource? {
+    guard let map else { return nil }
+    let bytes = (map["bytes"] as? [Int] ?? []).compactMap(UInt8.init(exactly:))
+    return PapyrusMacosInlineResource(
+      data: Data(bytes),
+      mimeType: map["mimeType"] as? String ?? "application/octet-stream",
+      statusCode: map["statusCode"] as? Int ?? 200,
+      headers: map["headers"] as? [String: String] ?? [:]
+    )
+  }
+
+  private func httpResponse(for url: URL, resource: PapyrusMacosInlineResource) -> HTTPURLResponse? {
+    var headers = resource.headers
+    if headers["Content-Type"] == nil {
+      headers["Content-Type"] = resource.mimeType
+    }
+    return HTTPURLResponse(
+      url: url,
+      statusCode: resource.statusCode,
+      httpVersion: "HTTP/1.1",
+      headerFields: headers
+    )
+  }
+
+  private func textEncodingName(for mimeType: String) -> String? {
+    let lower = mimeType.lowercased()
+    if lower.hasPrefix("text/") || lower.contains("json") || lower.contains("javascript") || lower.contains("xml") || lower.contains("svg") {
+      return "utf-8"
+    }
+    return nil
+  }
+
+  private var registeredVirtualResourceScheme: String? {
+    switch virtualResourceScheme {
+    case "http", "https", "file", "about", "data", "blob":
+      return nil
+    default:
+      return virtualResourceScheme
+    }
+  }
+
+  private func sanitizeCustomScheme(_ scheme: String?) -> String {
+    let trimmed = scheme?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed?.isEmpty == false ? trimmed!.lowercased() : "papyrus-resource"
+  }
+
   private func htmlDataURL(for html: String) -> URL? {
     guard let data = html.data(using: .utf8) else {
       return nil
@@ -281,6 +497,22 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
       "supportsDownloadInterception": true,
       "supportsPermissionInterception": true,
     ]
+  }
+}
+
+private class PapyrusMacosSchemeHandler: NSObject, WKURLSchemeHandler {
+  weak var plugin: PapyrusMacosPlugin?
+
+  init(plugin: PapyrusMacosPlugin) {
+    self.plugin = plugin
+  }
+
+  func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+    plugin?.startSchemeTask(urlSchemeTask)
+  }
+
+  func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
+    plugin?.stopSchemeTask(urlSchemeTask)
   }
 }
 

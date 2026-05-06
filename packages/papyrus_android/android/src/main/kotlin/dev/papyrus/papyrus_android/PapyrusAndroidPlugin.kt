@@ -4,6 +4,9 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.DownloadListener
 import android.webkit.PermissionRequest
@@ -19,14 +22,41 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.StandardMessageCodec
 import io.flutter.plugin.platform.PlatformView
 import io.flutter.plugin.platform.PlatformViewFactory
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+
+private data class PapyrusAndroidInlineResource(
+    val bytes: ByteArray,
+    val mimeType: String,
+    val statusCode: Int = 200,
+    val headers: Map<String, String> = emptyMap(),
+)
+
+private data class PapyrusAndroidResourcePolicy(
+    val remoteResources: String = "block",
+    val allowedHosts: Set<String> = emptySet(),
+    val allowedSchemes: Set<String> = setOf("https"),
+    val enableRequestInterception: Boolean = true,
+)
+
+private data class PapyrusAndroidResourceDecision(
+    val action: String,
+    val response: PapyrusAndroidInlineResource? = null,
+)
 
 class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private lateinit var channel: MethodChannel
     private lateinit var appContext: Context
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var webView: WebView? = null
     private var pendingLoad: Map<*, *>? = null
     private var progress: Double = 0.0
+    private var resourceResolverEnabled = false
+    private var resourcePolicy = PapyrusAndroidResourcePolicy()
+    private val virtualResources = mutableMapOf<String, PapyrusAndroidInlineResource>()
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         appContext = binding.applicationContext
@@ -40,9 +70,11 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
-        webView?.destroy()
+        destroyWebView(webView)
         webView = null
         pendingLoad = null
+        virtualResources.clear()
+        resourceResolverEnabled = false
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -71,7 +103,18 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 "printDocument" -> { printDocument(call.arguments as? Map<*, *>); result.success(null) }
                 "clearCache" -> { webView?.clearCache(true); result.success(null) }
                 "clearStorage" -> { webView?.clearHistory(); result.success(null) }
-                "dispose" -> { webView?.destroy(); webView = null; pendingLoad = null; result.success(null) }
+                "setResourceResolverEnabled" -> {
+                    resourceResolverEnabled = call.arguments == true
+                    result.success(null)
+                }
+                "dispose" -> {
+                    destroyWebView(webView)
+                    webView = null
+                    pendingLoad = null
+                    virtualResources.clear()
+                    resourceResolverEnabled = false
+                    result.success(null)
+                }
                 "getCapabilities" -> result.success(capabilities())
                 else -> result.notImplemented()
             }
@@ -82,9 +125,11 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     @SuppressLint("SetJavaScriptEnabled")
     internal fun createWebView(config: Map<*, *>): WebView {
+        resourceResolverEnabled = config["resourceResolverEnabled"] as? Boolean ?: resourceResolverEnabled
         val view = WebView(appContext)
+        resourcePolicy = resourcePolicyFromConfig(config)
         configureWebView(view, config)
-        webView?.destroy()
+        destroyWebView(webView)
         webView = view
         runPendingLoadIfNeeded()
         return view
@@ -94,7 +139,22 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         if (webView === view) {
             webView = null
         }
-        view.destroy()
+        destroyWebView(view)
+    }
+
+    private fun destroyWebView(view: WebView?) {
+        val target = view ?: return
+        try {
+            target.stopLoading()
+            target.onPause()
+            target.pauseTimers()
+            target.webChromeClient = null
+            target.webViewClient = object : WebViewClient() {}
+            (target.parent as? ViewGroup)?.removeView(target)
+            target.removeAllViews()
+        } finally {
+            target.destroy()
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -119,8 +179,23 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                channel.invokeMethod("resourceRequest", request.url.toString())
-                return null
+                resolveInlineResource(request.url.toString())?.let {
+                    return webResourceResponse(it)
+                }
+
+                val hostDecision =
+                    if (resourceResolverEnabled && resourcePolicy.enableRequestInterception) {
+                        requestResourceDecision(request)
+                    } else {
+                        null
+                    }
+
+                return when (hostDecision?.action) {
+                    "respond" -> webResourceResponse(hostDecision.response ?: blockedResource())
+                    "block" -> webResourceResponse(blockedResource())
+                    "allow" -> fallbackResourceResponse(view, request, allowByHost = true)
+                    else -> fallbackResourceResponse(view, request)
+                }
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
@@ -153,6 +228,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     private fun load(request: Map<*, *>) {
+        updateVirtualResources(request)
         val view = webView ?: run {
             pendingLoad = request
             return
@@ -223,6 +299,199 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         "supportsDownloadInterception" to true,
         "supportsPermissionInterception" to true,
     )
+
+    private fun resourcePolicyFromConfig(config: Map<*, *>): PapyrusAndroidResourcePolicy {
+        return PapyrusAndroidResourcePolicy(
+            remoteResources = config["remoteResources"] as? String ?: "block",
+            allowedHosts = stringSet(config["allowedHosts"]),
+            allowedSchemes = stringSet(config["allowedSchemes"]).ifEmpty { setOf("https") },
+            enableRequestInterception = config["enableRequestInterception"] as? Boolean ?: true,
+        )
+    }
+
+    private fun updateVirtualResources(request: Map<*, *>) {
+        virtualResources.clear()
+        val resources = request["virtualResources"] as? List<*> ?: return
+        for (entry in resources) {
+            val map = entry as? Map<*, *> ?: continue
+            val uri = map["uri"] as? String ?: continue
+            virtualResources[uri] = PapyrusAndroidInlineResource(
+                bytes = byteArray(map["bytes"]),
+                mimeType = map["mimeType"] as? String ?: "application/octet-stream",
+                statusCode = (map["statusCode"] as? Number)?.toInt() ?: 200,
+                headers = stringMap(map["headers"]),
+            )
+        }
+    }
+
+    private fun resolveInlineResource(uri: String): PapyrusAndroidInlineResource? =
+        virtualResources[uri]
+
+    private fun requestResourceDecision(
+        request: WebResourceRequest,
+    ): PapyrusAndroidResourceDecision? {
+        val latch = CountDownLatch(1)
+        val resultRef = AtomicReference<Any?>()
+
+        val arguments = mapOf(
+            "uri" to request.url.toString(),
+            "method" to request.method,
+            "headers" to request.requestHeaders,
+            "resourceType" to resourceTypeFor(request),
+            "isMainFrame" to request.isForMainFrame,
+        )
+
+        mainHandler.post {
+            channel.invokeMethod("resourceRequest", arguments, object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    resultRef.set(result)
+                    latch.countDown()
+                }
+
+                override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                    latch.countDown()
+                }
+
+                override fun notImplemented() {
+                    latch.countDown()
+                }
+            })
+        }
+
+        if (!latch.await(2, TimeUnit.SECONDS)) {
+            return PapyrusAndroidResourceDecision(action = "block")
+        }
+
+        val map = resultRef.get() as? Map<*, *> ?: return PapyrusAndroidResourceDecision(action = "block")
+        return when (map["decision"] as? String) {
+            "allow" -> PapyrusAndroidResourceDecision(action = "allow")
+            "respond" -> {
+                val response = map["response"] as? Map<*, *> ?: return PapyrusAndroidResourceDecision(action = "block")
+                PapyrusAndroidResourceDecision(
+                    action = "respond",
+                    response = PapyrusAndroidInlineResource(
+                        bytes = byteArray(response["bytes"]),
+                        mimeType = response["mimeType"] as? String ?: "application/octet-stream",
+                        statusCode = (response["statusCode"] as? Number)?.toInt() ?: 200,
+                        headers = stringMap(response["headers"]),
+                    ),
+                )
+            }
+            else -> PapyrusAndroidResourceDecision(action = "block")
+        }
+    }
+
+    private fun fallbackResourceResponse(
+        view: WebView,
+        request: WebResourceRequest,
+        allowByHost: Boolean = false,
+    ): WebResourceResponse? {
+        val scheme = request.url.scheme?.lowercase() ?: return webResourceResponse(blockedResource())
+        return when (scheme) {
+            "http", "https" -> {
+                if (allowByHost || isRemoteRequestAllowed(request.url)) {
+                    null
+                } else {
+                    webResourceResponse(blockedResource())
+                }
+            }
+            "file" -> if (view.settings.allowFileAccess || allowByHost) null else webResourceResponse(blockedResource())
+            "about", "data" -> null
+            else -> webResourceResponse(notFoundResource())
+        }
+    }
+
+    private fun isRemoteRequestAllowed(uri: android.net.Uri): Boolean {
+        val scheme = uri.scheme?.lowercase() ?: return false
+        if (!resourcePolicy.allowedSchemes.contains(scheme)) {
+            return false
+        }
+        return when (resourcePolicy.remoteResources) {
+            "allowAll" -> true
+            "allowByHost" -> resourcePolicy.allowedHosts.contains(uri.host ?: "")
+            else -> false
+        }
+    }
+
+    private fun resourceTypeFor(request: WebResourceRequest): String {
+        val accept = request.requestHeaders["Accept"]?.lowercase()
+        val path = request.url.lastPathSegment?.lowercase().orEmpty()
+        return when {
+            request.isForMainFrame -> "document"
+            accept?.contains("text/css") == true || path.endsWith(".css") -> "stylesheet"
+            accept?.contains("image/") == true || path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".jpeg") || path.endsWith(".gif") || path.endsWith(".svg") || path.endsWith(".webp") -> "image"
+            accept?.contains("font/") == true || path.endsWith(".woff") || path.endsWith(".woff2") || path.endsWith(".ttf") -> "font"
+            accept?.contains("javascript") == true || path.endsWith(".js") -> "script"
+            accept?.contains("video/") == true || accept?.contains("audio/") == true -> "media"
+            else -> "other"
+        }
+    }
+
+    private fun webResourceResponse(resource: PapyrusAndroidInlineResource): WebResourceResponse {
+        return WebResourceResponse(
+            resource.mimeType,
+            responseEncoding(resource.mimeType),
+            resource.statusCode,
+            reasonPhrase(resource.statusCode),
+            resource.headers,
+            ByteArrayInputStream(resource.bytes),
+        )
+    }
+
+    private fun blockedResource() = PapyrusAndroidInlineResource(
+        bytes = ByteArray(0),
+        mimeType = "text/plain",
+        statusCode = 403,
+    )
+
+    private fun notFoundResource() = PapyrusAndroidInlineResource(
+        bytes = ByteArray(0),
+        mimeType = "text/plain",
+        statusCode = 404,
+    )
+
+    private fun responseEncoding(mimeType: String): String? {
+        val lower = mimeType.lowercase()
+        return if (
+            lower.startsWith("text/") ||
+            lower.contains("json") ||
+            lower.contains("javascript") ||
+            lower.contains("xml") ||
+            lower.contains("svg")
+        ) {
+            "utf-8"
+        } else {
+            null
+        }
+    }
+
+    private fun reasonPhrase(statusCode: Int): String {
+        return when (statusCode) {
+            200 -> "OK"
+            403 -> "Blocked"
+            404 -> "Not Found"
+            else -> "Papyrus"
+        }
+    }
+
+    private fun stringSet(value: Any?): Set<String> {
+        val items = value as? List<*> ?: return emptySet()
+        return items.mapNotNull { it?.toString() }.toSet()
+    }
+
+    private fun stringMap(value: Any?): Map<String, String> {
+        val map = value as? Map<*, *> ?: return emptyMap()
+        return map.entries.associate { (key, entry) ->
+            (key?.toString() ?: "") to (entry?.toString() ?: "")
+        }
+    }
+
+    private fun byteArray(value: Any?): ByteArray {
+        val items = value as? List<*> ?: return ByteArray(0)
+        return items.mapNotNull { (it as? Number)?.toInt() }
+            .map { it.toByte() }
+            .toByteArray()
+    }
 }
 
 private class PapyrusWebViewFactory(
