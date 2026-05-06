@@ -68,6 +68,13 @@ abstract class PapyrusPlatform {
     );
   }
 
+  Future<String?> selectedText() {
+    throw const PapyrusException(
+      PapyrusErrorCode.unsupportedPlatformFeature,
+      'Selected-text queries are not supported by this platform.',
+    );
+  }
+
   Future<void> addJavaScriptChannel(String name) async {}
 
   Future<void> removeJavaScriptChannel(String name) async {}

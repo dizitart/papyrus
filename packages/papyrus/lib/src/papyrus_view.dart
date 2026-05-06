@@ -438,32 +438,10 @@ class _UnsupportedNativeView extends StatelessWidget {
 Map<String, Object?> _configurationMap(
   PapyrusConfiguration configuration, {
   bool resourceResolverEnabled = false,
-}) => {
-  'allowJavaScript':
-      configuration.security.allowJavaScript ||
-      configuration.javascript.mode != PapyrusJavaScriptMode.disabled,
-  'allowFileAccess': configuration.security.allowFileAccess,
-  'allowPopups': configuration.security.allowPopups,
-  'allowMixedContent': configuration.security.allowMixedContent,
-  'ephemeral': configuration.storage.ephemeral,
-  'autoHeight': configuration.display.autoHeight,
-  'zoomEnabled': configuration.display.zoomEnabled,
-  'textZoom': configuration.display.textZoom,
-  'virtualResourceScheme':
-      configuration.resources.virtualResourceOrigin?.scheme ??
-      'papyrus-resource',
-  'remoteResources': configuration.resources.remoteResources.name,
-  'allowedHosts': configuration.resources.allowedHosts.toList(),
-  'allowedSchemes': configuration.resources.allowedSchemes.toList(),
-  'blockedResourceTypes': configuration.resources.blockedResourceTypes
-      .map((type) => type.name)
-      .toList(),
-  'enableRequestInterception':
-      configuration.resources.enableRequestInterception,
-  'resourceResolverEnabled': resourceResolverEnabled,
-  'debuggingEnabled': configuration.platform.debuggingEnabled,
-  'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
-};
+}) => papyrusConfigurationToMap(
+  configuration,
+  resourceResolverEnabled: resourceResolverEnabled,
+);
 
 String _configurationSignature(PapyrusConfiguration configuration) =>
     _configurationMap(configuration).toString();

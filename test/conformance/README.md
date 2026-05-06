@@ -50,16 +50,22 @@ The live suites currently cover these backend behaviors:
 - Intercepted main-document loading and resource callbacks.
 - Navigation APIs and history behavior where the backend exposes a back/forward stack.
 - `currentUri()` and progress checks on intercepted navigations.
+- Text-selection helpers: `selectedText()`, `copySelection()`, and `quoteSelection()`.
 - Snapshot support.
 - Print support on backends where `printDocument` completes non-interactively under `flutter test`.
 - Cache and storage clearing.
 - File-backed loading metadata on iOS, macOS, Linux, and Windows.
+
+Recent live validation:
+
+- The text-selection helper scenario and the full public API conformance suite were rerun successfully on `macos`, the iOS simulator `4BC64162-0CFF-4C35-B60E-7B4A4EFF0770`, and the Android emulator `emulator-5554`.
 
 ## Known Gaps
 
 - Android `loadFile` is still covered contractually through the controller/package tests, but the live `flutter test` path for file-backed follow-up assertions is not stable enough yet to keep in the portable backend suite. The public API conformance integration file skips that live file-metadata slice on Android for now.
 - macOS print capability is still reported and covered contractually, but the live `printDocument` invocation is skipped in the portable suite because `WKWebView.printView` enters an interactive print flow under `flutter test`.
 - `loadData` remains contract-tested only. Native parity for live byte-data loading is not finished across all backends yet.
+- Linux and Windows have the new selected-text backend hooks, but that live interaction slice still needs host-native validation on those machines.
 
 ## Host Notes
 

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:papyrus/papyrus.dart';
@@ -34,6 +35,31 @@ const String _fileDocumentHtml = '''
   <head><title>File Document</title></head>
   <body style="margin:0;background:#0f766e;color:white;font:24px -apple-system,sans-serif">
     <main style="height:220px;display:grid;place-items:center">File Document</main>
+  </body>
+</html>
+''';
+
+const String _selectionHtml = '''
+<!doctype html>
+<html>
+  <head>
+    <title>Selection Document</title>
+    <script>
+      window.addEventListener('load', function () {
+        const target = document.getElementById('selection-target');
+        if (!target || !window.getSelection) {
+          return;
+        }
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(target);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      });
+    </script>
+  </head>
+  <body style="margin:0;font:20px -apple-system,sans-serif">
+    <p id="selection-target">Papyrus selection text</p>
   </body>
 </html>
 ''';
@@ -183,6 +209,50 @@ void main() {
         ),
       );
     }
+  });
+
+  testWidgets('public API conformance for text selection helpers', (tester) async {
+    final controller = PapyrusController.create();
+
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await _withStepTimeout(controller.dispose(), 'controller.dispose');
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 360,
+              height: 220,
+              child: PapyrusView(
+                controller: controller,
+                configuration: _conformanceConfiguration,
+                initialRequest: const PapyrusHtmlRequest(html: _selectionHtml),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final selectedText = await _waitForSelectedText(
+      tester,
+      controller,
+      'Papyrus selection text',
+    );
+    expect(selectedText, 'Papyrus selection text');
+    expect(
+      await controller.quoteSelection(prefix: '> '),
+      '> Papyrus selection text',
+    );
+
+    await controller.copySelection();
+    final clipboardData = await Clipboard.getData('text/plain');
+    expect(clipboardData?.text, 'Papyrus selection text');
   });
 
   testWidgets('public API conformance for print and storage maintenance', (
@@ -414,6 +484,25 @@ Future<PapyrusContentSize> _waitForPositiveContentSize(
   }
 
   throw TestFailure('Timed out waiting for positive content size');
+}
+
+Future<String?> _waitForSelectedText(
+  WidgetTester tester,
+  PapyrusController controller,
+  String expected,
+) async {
+  for (var attempt = 0; attempt < 40; attempt += 1) {
+    final value = await _withStepTimeout(
+      controller.selectedText(),
+      'controller.selectedText',
+    );
+    if (value == expected) {
+      return value;
+    }
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
+  throw TestFailure('Timed out waiting for selectedText=$expected');
 }
 
 Future<T> _withStepTimeout<T>(Future<T> future, String label) {

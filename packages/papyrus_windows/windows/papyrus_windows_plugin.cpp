@@ -383,6 +383,21 @@ flutter::EncodableValue Capabilities(bool runtime_available) {
   };
 }
 
+std::string SelectedTextScript() {
+  return "(() => { const selection = window.getSelection ? window.getSelection().toString() : ''; return selection ? encodeURIComponent(selection) : null; })()";
+}
+
+std::string DecodeExecuteScriptStringResult(const std::wstring& value) {
+  std::string utf8 = WideToUtf8(value);
+  if (utf8.empty() || utf8 == "null") {
+    return std::string();
+  }
+  if (utf8.size() >= 2 && utf8.front() == '"' && utf8.back() == '"') {
+    return utf8.substr(1, utf8.size() - 2);
+  }
+  return utf8;
+}
+
 void UnsupportedWebView2(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   result->Error("webViewUnavailable",
@@ -722,7 +737,8 @@ void PapyrusWindowsPlugin::ApplySettings() {
       BoolFromValue(configuration_, "debuggingEnabled") ? TRUE : FALSE);
   settings->put_IsZoomControlEnabled(
       BoolFromValue(configuration_, "zoomEnabled", true) ? TRUE : FALSE);
-  settings->put_AreDefaultContextMenusEnabled(FALSE);
+    settings->put_AreDefaultContextMenusEnabled(
+      BoolFromValue(configuration_, "allowContextMenu", true) ? TRUE : FALSE);
   settings->put_IsStatusBarEnabled(FALSE);
 }
 
@@ -1017,6 +1033,40 @@ void PapyrusWindowsPlugin::HandleMethodCall(
       return;
     }
     result->Success(flutter::EncodableValue(std::vector<uint8_t>{}));
+  } else if (method == "selectedText") {
+    if (!webview2_available_) {
+      UnsupportedWebView2(std::move(result));
+      return;
+    }
+    if (!webview_) {
+      result->Success(flutter::EncodableValue());
+      return;
+    }
+    auto* raw_result = result.release();
+    webview_->ExecuteScript(
+        Utf8ToWide(SelectedTextScript()).c_str(),
+        Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+            [raw_result](HRESULT error_code, LPCWSTR json_result) -> HRESULT {
+              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                  result(raw_result);
+              if (FAILED(error_code)) {
+                result->Error(
+                    "papyrus_windows",
+                    "Failed to query selected text from WebView2.");
+                return S_OK;
+              }
+              const std::wstring raw_value =
+                  json_result == nullptr ? std::wstring() : json_result;
+              const std::string decoded =
+                  DecodeExecuteScriptStringResult(raw_value);
+              if (decoded.empty()) {
+                result->Success(flutter::EncodableValue());
+              } else {
+                result->Success(flutter::EncodableValue(decoded));
+              }
+              return S_OK;
+            })
+            .Get());
   } else if (method == "evaluateJavaScript") {
     if (!webview2_available_) {
       UnsupportedWebView2(std::move(result));

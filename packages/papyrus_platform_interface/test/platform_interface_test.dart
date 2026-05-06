@@ -87,6 +87,106 @@ void main() {
         PapyrusNavigationDecision.openExternally,
       );
     });
+
+    test('configuration serializer exposes the generic policy surface', () {
+      final map = papyrusConfigurationToMap(
+        PapyrusConfiguration(
+          security: const PapyrusSecurityPolicy(
+            allowJavaScript: true,
+            allowInlineMediaPlayback: true,
+            allowFileAccess: true,
+            allowUniversalAccessFromFileUrls: true,
+            allowPopups: true,
+            allowMixedContent: true,
+            allowClipboardRead: true,
+            allowClipboardWrite: true,
+            allowGeolocation: true,
+            allowCamera: true,
+            allowMicrophone: true,
+            allowProtectedMedia: true,
+            enableContentIsolation: false,
+            contentSecurityPolicy: "default-src 'self'",
+          ),
+          navigation: const PapyrusNavigationPolicy(
+            defaultDecision: PapyrusNavigationDecision.openExternally,
+            allowedSchemes: {'https', 'papyrus-resource'},
+            externalSchemes: {'mailto', 'tel'},
+            blockedSchemes: {'javascript'},
+            requireUserGestureForExternalOpen: false,
+            allowMainFrameNavigation: true,
+            allowSubFrameNavigation: true,
+          ),
+          resources: PapyrusResourcePolicy(
+            remoteResources: PapyrusRemoteResourceMode.allowByHost,
+            allowedHosts: {'cdn.example.com'},
+            allowedSchemes: {'https', 'papyrus-resource'},
+            blockedResourceTypes: {PapyrusResourceType.image},
+            virtualResourceOrigin: Uri.parse('papyrus-resource://viewer.local/'),
+            enableRequestInterception: false,
+          ),
+          javascript: const PapyrusJavaScriptPolicy(
+            mode: PapyrusJavaScriptMode.restricted,
+            allowedChannels: {'bridge'},
+            allowUserScripts: true,
+            injectedScripts: [PapyrusUserScript('window.__papyrus = true;')],
+          ),
+          storage: const PapyrusStoragePolicy(
+            cookies: PapyrusCookiePolicy.allowByHost,
+            localStorage: PapyrusStorageMode.enabled,
+            cache: PapyrusCacheMode.noCache,
+            ephemeral: false,
+            partitionId: 'viewer',
+          ),
+          media: const PapyrusMediaPolicy(
+            autoPlay: true,
+            inlinePlayback: true,
+            requireUserGesture: false,
+            allowFullscreen: true,
+          ),
+          display: const PapyrusDisplayPolicy(
+            autoHeight: true,
+            minimumHeight: 100,
+            maximumHeight: 600,
+            zoomEnabled: false,
+            textZoom: 1.25,
+            backgroundColor: 0xFF112233,
+            darkMode: PapyrusDarkMode.dark,
+            viewport: PapyrusViewportPolicy(width: '1024', scale: 1.5),
+            measurement: PapyrusMeasurementPolicy(
+              observeMutations: false,
+              debounceMillis: 80,
+            ),
+          ),
+          accessibility: const PapyrusAccessibilityPolicy(
+            enableNativeSemantics: false,
+          ),
+          interaction: const PapyrusInteractionPolicy(
+            allowTextSelection: false,
+            allowContextMenu: false,
+            allowLongPress: false,
+          ),
+          platform: const PapyrusPlatformOptions(
+            debuggingEnabled: true,
+            hardwareAcceleration: PapyrusHardwareAccelerationMode.software,
+          ),
+        ),
+        resourceResolverEnabled: true,
+      );
+
+      expect(map['allowClipboardRead'], isTrue);
+      expect(map['allowProtectedMedia'], isTrue);
+      expect(map['navigationDefaultDecision'], 'openExternally');
+      expect(map['navigationAllowedSchemes'], ['https', 'papyrus-resource']);
+      expect(map['allowedJavaScriptChannels'], ['bridge']);
+      expect(map['cookiePolicy'], 'allowByHost');
+      expect(map['mediaAutoPlay'], isTrue);
+      expect(map['backgroundColor'], 0xFF112233);
+      expect(map['allowTextSelection'], isFalse);
+      expect(map['allowContextMenu'], isFalse);
+      expect(map['allowLongPress'], isFalse);
+      expect(map['resourceResolverEnabled'], isTrue);
+      expect(map['hardwareAcceleration'], 'software');
+    });
   });
 
   group('policies', () {

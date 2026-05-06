@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:papyrus/papyrus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('controller delegates load and state operations to platform', () async {
     final platform = RecordingPapyrusPlatform();
     PapyrusPlatform.instance = platform;
@@ -288,6 +291,11 @@ void main() {
         await controller.evaluateJavaScript('document.title'),
         'Papyrus Title',
       );
+      expect(await controller.selectedText(), 'Quoted text');
+      expect(
+        await controller.quoteSelection(prefix: '> '),
+        '> Quoted text',
+      );
 
       await controller.addJavaScriptChannel('bridge');
       await controller.removeJavaScriptChannel('bridge');
@@ -320,6 +328,30 @@ void main() {
       expect(platform.lastSnapshotOptions?.height, 180);
     },
   );
+
+  testWidgets('controller copies the current selection to the clipboard', (
+    tester,
+  ) async {
+    final platform = FeatureCompletePapyrusPlatform();
+    PapyrusPlatform.instance = platform;
+    final controller = PapyrusController.create();
+    MethodCall? clipboardCall;
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+          clipboardCall = call;
+          return null;
+        });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    await controller.copySelection();
+
+    expect(clipboardCall?.method, 'Clipboard.setData');
+    expect(clipboardCall?.arguments, {'text': 'Quoted text'});
+  });
 
   testWidgets('PapyrusView forwards page, progress, error, and size events', (
     tester,
@@ -443,6 +475,7 @@ class FeatureCompletePapyrusPlatform extends RecordingPapyrusPlatform {
   bool canGoBackValue = true;
   bool canGoForwardValue = true;
   Object? evaluateJavaScriptValue = 'Papyrus Title';
+  String? selectedTextValue = 'Quoted text';
   String? lastEvaluatedJavaScript;
   PapyrusSnapshotOptions? lastSnapshotOptions;
   PapyrusPrintOptions? lastPrintOptions;
@@ -499,6 +532,9 @@ class FeatureCompletePapyrusPlatform extends RecordingPapyrusPlatform {
     lastEvaluatedJavaScript = source;
     return evaluateJavaScriptValue;
   }
+
+  @override
+  Future<String?> selectedText() async => selectedTextValue;
 
   @override
   Future<void> addJavaScriptChannel(String name) async {

@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:papyrus_platform_interface/papyrus_platform_interface.dart';
 
 class PapyrusController {
@@ -92,6 +93,24 @@ class PapyrusController {
 
   Future<Object?> evaluateJavaScript(String source) {
     return _platform.evaluateJavaScript(source);
+  }
+
+  Future<String?> selectedText() => _platform.selectedText();
+
+  Future<void> copySelection() async {
+    final text = await selectedText();
+    if (text == null || text.isEmpty) {
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: text));
+  }
+
+  Future<String?> quoteSelection({String prefix = '> '}) async {
+    final text = await selectedText();
+    if (text == null || text.isEmpty) {
+      return null;
+    }
+    return text.split('\n').map((line) => '$prefix$line').join('\n');
   }
 
   Future<void> addJavaScriptChannel(String name) {

@@ -15,6 +15,8 @@ private enum PapyrusMacosResourceDecision {
   case respond(PapyrusMacosInlineResource)
 }
 
+private let papyrusSelectedTextScript = "(function(){var selection = window.getSelection ? window.getSelection().toString() : ''; return selection ? encodeURIComponent(selection) : null;})()"
+
 public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WKUIDelegate {
   private var channel: FlutterMethodChannel?
   private weak var flutterView: NSView?
@@ -83,6 +85,14 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
           result(value)
         }
       }
+    case "selectedText":
+      webView?.evaluateJavaScript(papyrusSelectedTextScript) { value, error in
+        if let error = error {
+          result(FlutterError(code: "papyrus_macos", message: error.localizedDescription, details: nil))
+        } else {
+          result((value as? String)?.isEmpty == true ? nil : value)
+        }
+      } ?? result(nil)
     case "getContentSize":
       result(["width": webView?.bounds.width ?? 0, "height": webView?.bounds.height ?? 0])
     case "captureSnapshot":

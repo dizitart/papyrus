@@ -248,6 +248,7 @@ class PapyrusConfiguration {
     this.media = const PapyrusMediaPolicy(),
     this.display = const PapyrusDisplayPolicy(),
     this.accessibility = const PapyrusAccessibilityPolicy(),
+    this.interaction = const PapyrusInteractionPolicy(),
     this.platform = const PapyrusPlatformOptions(),
   });
 
@@ -259,6 +260,7 @@ class PapyrusConfiguration {
   final PapyrusMediaPolicy media;
   final PapyrusDisplayPolicy display;
   final PapyrusAccessibilityPolicy accessibility;
+  final PapyrusInteractionPolicy interaction;
   final PapyrusPlatformOptions platform;
 
   PapyrusConfiguration copyWith({
@@ -270,6 +272,7 @@ class PapyrusConfiguration {
     PapyrusMediaPolicy? media,
     PapyrusDisplayPolicy? display,
     PapyrusAccessibilityPolicy? accessibility,
+    PapyrusInteractionPolicy? interaction,
     PapyrusPlatformOptions? platform,
   }) {
     return PapyrusConfiguration(
@@ -281,6 +284,7 @@ class PapyrusConfiguration {
       media: media ?? this.media,
       display: display ?? this.display,
       accessibility: accessibility ?? this.accessibility,
+      interaction: interaction ?? this.interaction,
       platform: platform ?? this.platform,
     );
   }
@@ -584,6 +588,18 @@ class PapyrusAccessibilityPolicy {
   const PapyrusAccessibilityPolicy({this.enableNativeSemantics = true});
 
   final bool enableNativeSemantics;
+}
+
+class PapyrusInteractionPolicy {
+  const PapyrusInteractionPolicy({
+    this.allowTextSelection = true,
+    this.allowContextMenu = true,
+    this.allowLongPress = true,
+  });
+
+  final bool allowTextSelection;
+  final bool allowContextMenu;
+  final bool allowLongPress;
 }
 
 class PapyrusPlatformOptions {
@@ -933,6 +949,83 @@ class PapyrusPlatformCapabilities {
     supportsPermissionInterception,
   );
 }
+
+  JsonMap papyrusConfigurationToMap(
+    PapyrusConfiguration configuration, {
+    bool resourceResolverEnabled = false,
+  }) => {
+    'allowJavaScript':
+      configuration.security.allowJavaScript ||
+      configuration.javascript.mode != PapyrusJavaScriptMode.disabled,
+    'allowInlineMediaPlayback': configuration.security.allowInlineMediaPlayback,
+    'allowFileAccess': configuration.security.allowFileAccess,
+    'allowUniversalAccessFromFileUrls':
+      configuration.security.allowUniversalAccessFromFileUrls,
+    'allowPopups': configuration.security.allowPopups,
+    'allowMixedContent': configuration.security.allowMixedContent,
+    'allowClipboardRead': configuration.security.allowClipboardRead,
+    'allowClipboardWrite': configuration.security.allowClipboardWrite,
+    'allowGeolocation': configuration.security.allowGeolocation,
+    'allowCamera': configuration.security.allowCamera,
+    'allowMicrophone': configuration.security.allowMicrophone,
+    'allowProtectedMedia': configuration.security.allowProtectedMedia,
+    'enableContentIsolation': configuration.security.enableContentIsolation,
+    'contentSecurityPolicy': configuration.security.contentSecurityPolicy,
+    'navigationDefaultDecision': configuration.navigation.defaultDecision.name,
+    'navigationAllowedSchemes': configuration.navigation.allowedSchemes.toList(),
+    'navigationExternalSchemes': configuration.navigation.externalSchemes
+      .toList(),
+    'navigationBlockedSchemes': configuration.navigation.blockedSchemes.toList(),
+    'requireUserGestureForExternalOpen':
+      configuration.navigation.requireUserGestureForExternalOpen,
+    'allowMainFrameNavigation': configuration.navigation.allowMainFrameNavigation,
+    'allowSubFrameNavigation': configuration.navigation.allowSubFrameNavigation,
+    'remoteResources': configuration.resources.remoteResources.name,
+    'allowedHosts': configuration.resources.allowedHosts.toList(),
+    'allowedSchemes': configuration.resources.allowedSchemes.toList(),
+    'blockedResourceTypes': configuration.resources.blockedResourceTypes
+      .map((type) => type.name)
+      .toList(),
+    'virtualResourceScheme':
+      configuration.resources.virtualResourceOrigin?.scheme ??
+      'papyrus-resource',
+    'enableRequestInterception':
+      configuration.resources.enableRequestInterception,
+    'javaScriptMode': configuration.javascript.mode.name,
+    'allowedJavaScriptChannels': configuration.javascript.allowedChannels
+      .toList(),
+    'allowUserScripts': configuration.javascript.allowUserScripts,
+    'injectedScripts': configuration.javascript.injectedScripts
+      .map((script) => script.source)
+      .toList(),
+    'cookiePolicy': configuration.storage.cookies.name,
+    'localStorage': configuration.storage.localStorage.name,
+    'cacheMode': configuration.storage.cache.name,
+    'ephemeral': configuration.storage.ephemeral,
+    'partitionId': configuration.storage.partitionId,
+    'mediaAutoPlay': configuration.media.autoPlay,
+    'inlinePlayback': configuration.media.inlinePlayback,
+    'requireMediaUserGesture': configuration.media.requireUserGesture,
+    'allowFullscreen': configuration.media.allowFullscreen,
+    'autoHeight': configuration.display.autoHeight,
+    'minimumHeight': configuration.display.minimumHeight,
+    'maximumHeight': configuration.display.maximumHeight,
+    'zoomEnabled': configuration.display.zoomEnabled,
+    'textZoom': configuration.display.textZoom,
+    'backgroundColor': configuration.display.backgroundColor,
+    'darkMode': configuration.display.darkMode.name,
+    'viewportWidth': configuration.display.viewport.width,
+    'viewportScale': configuration.display.viewport.scale,
+    'observeMutations': configuration.display.measurement.observeMutations,
+    'measurementDebounceMillis': configuration.display.measurement.debounceMillis,
+    'enableNativeSemantics': configuration.accessibility.enableNativeSemantics,
+    'allowTextSelection': configuration.interaction.allowTextSelection,
+    'allowContextMenu': configuration.interaction.allowContextMenu,
+    'allowLongPress': configuration.interaction.allowLongPress,
+    'resourceResolverEnabled': resourceResolverEnabled,
+    'debuggingEnabled': configuration.platform.debuggingEnabled,
+    'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
+  };
 
 PapyrusResourceType _resourceTypeFromName(String name) {
   return PapyrusResourceType.values.firstWhere(

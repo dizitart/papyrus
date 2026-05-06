@@ -31,6 +31,10 @@ typedef struct {
   WebKitURISchemeRequest* request;
 } PapyrusLinuxSchemeInvocation;
 
+typedef struct {
+  FlMethodCall* method_call;
+} PapyrusLinuxMethodInvocation;
+
 static void papyrus_linux_inline_resource_free(
     PapyrusLinuxInlineResource* resource) {
   if (resource == nullptr) {
@@ -56,6 +60,17 @@ static void papyrus_linux_scheme_invocation_free(
   }
   if (invocation->request != nullptr) {
     g_object_unref(invocation->request);
+  }
+  g_free(invocation);
+}
+
+static void papyrus_linux_method_invocation_free(
+    PapyrusLinuxMethodInvocation* invocation) {
+  if (invocation == nullptr) {
+    return;
+  }
+  if (invocation->method_call != nullptr) {
+    g_object_unref(invocation->method_call);
   }
   g_free(invocation);
 }
@@ -283,6 +298,9 @@ static void papyrus_linux_resource_method_response_cb(GObject* object,
 static void papyrus_linux_uri_scheme_request_cb(
     WebKitURISchemeRequest* request,
     gpointer user_data);
+static void papyrus_linux_selected_text_cb(GObject* object,
+                       GAsyncResult* result,
+                       gpointer user_data);
 
 }  // namespace
 
@@ -802,6 +820,18 @@ static void papyrus_linux_plugin_handle_method_call(
         "unsupportedPlatformFeature",
         "WebKitGTK JavaScript evaluation is asynchronous and is not exposed "
         "through this synchronous method channel implementation yet.");
+  } else if (strcmp(method, "selectedText") == 0) {
+    if (self->web_view == nullptr) {
+      response = success_null();
+    } else {
+      auto* invocation = g_new0(PapyrusLinuxMethodInvocation, 1);
+      invocation->method_call = FL_METHOD_CALL(g_object_ref(method_call));
+      webkit_web_view_run_javascript(
+          self->web_view,
+          "(function(){var selection = window.getSelection ? window.getSelection().toString() : ''; return selection ? encodeURIComponent(selection) : null;})()",
+          nullptr, papyrus_linux_selected_text_cb, invocation);
+      return;
+    }
   } else if (strcmp(method, "getContentSize") == 0) {
     response = content_size_response(self);
   } else if (strcmp(method, "captureSnapshot") == 0) {
@@ -895,6 +925,36 @@ static void papyrus_linux_plugin_init(PapyrusLinuxPlugin* self) {
   self->last_y = 0;
   self->last_width = 0;
   self->last_height = 0;
+}
+
+static void papyrus_linux_selected_text_cb(GObject* object,
+                                           GAsyncResult* result,
+                                           gpointer user_data) {
+  PapyrusLinuxMethodInvocation* invocation =
+      static_cast<PapyrusLinuxMethodInvocation*>(user_data);
+  g_autoptr(GError) error = nullptr;
+  g_autoptr(FlMethodResponse) response = nullptr;
+
+  g_autoptr(WebKitJavascriptResult) javascript_result =
+      webkit_web_view_run_javascript_finish(WEBKIT_WEB_VIEW(object), result,
+                                            &error);
+  if (error != nullptr) {
+    response = error_response("papyrus_linux", error->message);
+  } else if (javascript_result == nullptr) {
+    response = success_null();
+  } else {
+    JSCValue* value = webkit_javascript_result_get_js_value(javascript_result);
+    g_autofree gchar* text = value == nullptr ? nullptr : jsc_value_to_string(value);
+    if (text == nullptr || text[0] == '\0' || g_strcmp0(text, "null") == 0) {
+      response = success_null();
+    } else {
+      g_autoptr(FlValue) result_value = fl_value_new_string(text);
+      response = FL_METHOD_RESPONSE(fl_method_success_response_new(result_value));
+    }
+  }
+
+  fl_method_call_respond(invocation->method_call, response, nullptr);
+  papyrus_linux_method_invocation_free(invocation);
 }
 
 static void method_call_cb(FlMethodChannel* channel, FlMethodCall* method_call,

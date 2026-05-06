@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.DownloadListener
@@ -58,6 +59,11 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private var resourcePolicy = PapyrusAndroidResourcePolicy()
     private val virtualResources = mutableMapOf<String, PapyrusAndroidInlineResource>()
 
+    private companion object {
+        const val SELECTED_TEXT_SCRIPT =
+            "(function(){var selection = window.getSelection ? window.getSelection().toString() : ''; return selection ? encodeURIComponent(selection) : null;})()"
+    }
+
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         appContext = binding.applicationContext
         channel = MethodChannel(binding.binaryMessenger, "dev.papyrus.papyrus_android")
@@ -98,6 +104,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 "title" -> result.success(webView?.title)
                 "estimatedProgress" -> result.success(progress)
                 "evaluateJavaScript" -> evaluate(call.arguments as? String ?: "", result)
+                "selectedText" -> selectedText(result)
                 "getContentSize" -> result.success(contentSize())
                 "captureSnapshot" -> captureSnapshot(result)
                 "printDocument" -> { printDocument(call.arguments as? Map<*, *>); result.success(null) }
@@ -160,6 +167,10 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView(view: WebView, config: Map<*, *>) {
         val allowJavaScript = config["allowJavaScript"] == true
+        val allowTextSelection = config["allowTextSelection"] != false
+        val allowContextMenu = config["allowContextMenu"] != false
+        val allowLongPress = config["allowLongPress"] != false
+        val enableLongPress = allowLongPress && allowTextSelection && allowContextMenu
         view.settings.javaScriptEnabled = allowJavaScript
         view.settings.javaScriptCanOpenWindowsAutomatically = config["allowPopups"] == true
         view.settings.allowFileAccess = config["allowFileAccess"] == true
@@ -167,6 +178,15 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         view.settings.domStorageEnabled = config["ephemeral"] != true
         view.settings.setSupportZoom(config["zoomEnabled"] != false)
         view.settings.cacheMode = WebSettings.LOAD_DEFAULT
+        view.isLongClickable = enableLongPress
+        view.isHapticFeedbackEnabled = enableLongPress
+        view.setOnLongClickListener(
+            if (enableLongPress) {
+                null
+            } else {
+                View.OnLongClickListener { true }
+            }
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             view.settings.mixedContentMode =
                 if (config["allowMixedContent"] == true) WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
@@ -264,6 +284,24 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         } else {
             result.error("unsupportedPlatformFeature", "JavaScript evaluation requires Android KitKat or newer.", null)
         }
+    }
+
+    private fun selectedText(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT) {
+            result.error(
+                "unsupportedPlatformFeature",
+                "Selected-text queries require Android KitKat or newer.",
+                null,
+            )
+            return
+        }
+        webView?.evaluateJavascript(SELECTED_TEXT_SCRIPT) { value ->
+            if (value == null || value == "null") {
+                result.success(null)
+            } else {
+                result.success(value.removeSurrounding("\""))
+            }
+        } ?: result.success(null)
     }
 
     private fun contentSize(): Map<String, Double> {

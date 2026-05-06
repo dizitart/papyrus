@@ -15,6 +15,8 @@ private enum PapyrusIosResourceDecision {
   case respond(PapyrusIosInlineResource)
 }
 
+private let papyrusSelectedTextScript = "(function(){var selection = window.getSelection ? window.getSelection().toString() : ''; return selection ? encodeURIComponent(selection) : null;})()"
+
 public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WKUIDelegate {
   private var channel: FlutterMethodChannel?
   private var webView: WKWebView?
@@ -74,6 +76,14 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
           result(value)
         }
       }
+    case "selectedText":
+      webView?.evaluateJavaScript(papyrusSelectedTextScript) { value, error in
+        if let error = error {
+          result(FlutterError(code: "papyrus_ios", message: error.localizedDescription, details: nil))
+        } else {
+          result((value as? String)?.isEmpty == true ? nil : value)
+        }
+      } ?? result(nil)
     case "getContentSize":
       result(["width": webView?.scrollView.contentSize.width ?? 0, "height": webView?.scrollView.contentSize.height ?? 0])
     case "captureSnapshot":

@@ -96,6 +96,15 @@ class PapyrusIos extends PapyrusPlatform {
       _channel.invokeMethod<Object?>('evaluateJavaScript', source);
 
   @override
+  Future<String?> selectedText() async {
+    final value = await _channel.invokeMethod<String>('selectedText');
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return Uri.decodeComponent(value);
+  }
+
+  @override
   Future<PapyrusContentSize> getContentSize() async {
     final map = await _channel.invokeMapMethod<String, Object?>(
       'getContentSize',
@@ -146,26 +155,8 @@ class PapyrusIos extends PapyrusPlatform {
   }
 }
 
-Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) => {
-  'allowJavaScript':
-      configuration.security.allowJavaScript ||
-      configuration.javascript.mode != PapyrusJavaScriptMode.disabled,
-  'ephemeral': configuration.storage.ephemeral,
-  'autoHeight': configuration.display.autoHeight,
-  'zoomEnabled': configuration.display.zoomEnabled,
-  'virtualResourceScheme':
-      configuration.resources.virtualResourceOrigin?.scheme ??
-      'papyrus-resource',
-  'remoteResources': configuration.resources.remoteResources.name,
-  'allowedHosts': configuration.resources.allowedHosts.toList(),
-  'allowedSchemes': configuration.resources.allowedSchemes.toList(),
-  'blockedResourceTypes': configuration.resources.blockedResourceTypes
-      .map((type) => type.name)
-      .toList(),
-  'enableRequestInterception':
-      configuration.resources.enableRequestInterception,
-  'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
-};
+Map<String, Object?> _configurationMap(PapyrusConfiguration configuration) =>
+  papyrusConfigurationToMap(configuration);
 
 PapyrusPlatformCapabilities? _capabilitiesFromMap(Map<String, Object?>? map) {
   if (map == null) return null;
