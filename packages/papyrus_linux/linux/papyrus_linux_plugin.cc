@@ -21,6 +21,12 @@ static const gchar* fl_value_lookup_string_or_null(FlValue* map,
 namespace {
 
 constexpr char kDefaultVirtualResourceScheme[] = "papyrus-resource";
+constexpr char kOverlayFixedDataKey[] = "papyrus-overlay-fixed";
+constexpr char kPrewrapInProgressDataKey[] = "papyrus-prewrap-in-progress";
+constexpr char kPrewrapDeferredHandlerDataKey[] =
+  "papyrus-prewrap-deferred-handler";
+
+gulong g_papyrus_linux_container_add_hook_id = 0;
 
 typedef struct {
   GBytes* bytes;
@@ -795,6 +801,125 @@ static gchar* next_inline_document_uri(PapyrusLinuxPlugin* self) {
                          self->inline_document_counter);
 }
 
+static GtkWidget* ensure_overlay_fixed_child(GtkWidget* overlay) {
+  GtkWidget* fixed =
+      GTK_WIDGET(g_object_get_data(G_OBJECT(overlay), kOverlayFixedDataKey));
+  if (fixed != nullptr) {
+    return fixed;
+  }
+
+  fixed = gtk_fixed_new();
+  gtk_widget_set_halign(fixed, GTK_ALIGN_START);
+  gtk_widget_set_valign(fixed, GTK_ALIGN_START);
+  gtk_widget_set_hexpand(fixed, FALSE);
+  gtk_widget_set_vexpand(fixed, FALSE);
+  gtk_widget_show(fixed);
+  gtk_overlay_add_overlay(GTK_OVERLAY(overlay), fixed);
+  g_object_set_data(G_OBJECT(overlay), kOverlayFixedDataKey, fixed);
+  return fixed;
+}
+
+static void prewrap_flutter_view_if_needed(GtkWidget* flutter_widget) {
+  if (flutter_widget == nullptr || !FL_IS_VIEW(flutter_widget) ||
+      gtk_widget_get_mapped(flutter_widget) ||
+      g_object_get_data(G_OBJECT(flutter_widget),
+                        kPrewrapInProgressDataKey) != nullptr) {
+    return;
+  }
+
+  GtkWidget* parent = gtk_widget_get_parent(flutter_widget);
+  if (parent == nullptr || GTK_IS_OVERLAY(parent) || !GTK_IS_WINDOW(parent)) {
+    return;
+  }
+
+  if (!GTK_IS_BIN(parent) ||
+      gtk_bin_get_child(GTK_BIN(parent)) != flutter_widget) {
+    return;
+  }
+
+  g_object_set_data(G_OBJECT(flutter_widget), kPrewrapInProgressDataKey,
+                    GINT_TO_POINTER(TRUE));
+
+  GtkWidget* overlay = gtk_overlay_new();
+  gtk_widget_show(overlay);
+  ensure_overlay_fixed_child(overlay);
+
+  g_object_ref(flutter_widget);
+  gtk_container_remove(GTK_CONTAINER(parent), flutter_widget);
+  gtk_container_add(GTK_CONTAINER(parent), overlay);
+  gtk_container_add(GTK_CONTAINER(overlay), flutter_widget);
+  g_object_unref(flutter_widget);
+
+  gtk_widget_show(flutter_widget);
+  g_object_set_data(G_OBJECT(flutter_widget), kPrewrapInProgressDataKey,
+                    nullptr);
+}
+
+static void papyrus_linux_after_view_parented(GtkWidget* widget,
+                                              GtkWidget* previous_widget,
+                                              gpointer user_data) {
+  (void)previous_widget;
+  (void)user_data;
+  g_signal_handlers_disconnect_by_func(
+      widget, reinterpret_cast<gpointer>(papyrus_linux_after_view_parented),
+      nullptr);
+  g_object_set_data(G_OBJECT(widget), kPrewrapDeferredHandlerDataKey,
+                    nullptr);
+  prewrap_flutter_view_if_needed(widget);
+}
+
+static gboolean papyrus_linux_container_add_emission_hook(
+    GSignalInvocationHint* hint,
+    guint n_param_values,
+    const GValue* param_values,
+    gpointer data) {
+  (void)hint;
+  (void)data;
+  if (n_param_values < 2) {
+    return TRUE;
+  }
+
+  GtkWidget* container = GTK_WIDGET(g_value_get_object(&param_values[0]));
+  GtkWidget* child = GTK_WIDGET(g_value_get_object(&param_values[1]));
+  if (container == nullptr || child == nullptr || !GTK_IS_WINDOW(container) ||
+      !FL_IS_VIEW(child)) {
+    return TRUE;
+  }
+
+  if (GTK_IS_BIN(container) && gtk_bin_get_child(GTK_BIN(container)) == child) {
+    prewrap_flutter_view_if_needed(child);
+    return TRUE;
+  }
+
+  if (g_object_get_data(G_OBJECT(child), kPrewrapDeferredHandlerDataKey) ==
+      nullptr) {
+    g_object_set_data(G_OBJECT(child), kPrewrapDeferredHandlerDataKey,
+                      GINT_TO_POINTER(TRUE));
+    g_signal_connect_after(child, "parent-set",
+                           G_CALLBACK(papyrus_linux_after_view_parented),
+                           nullptr);
+    g_signal_connect_after(child, "hierarchy-changed",
+                           G_CALLBACK(papyrus_linux_after_view_parented),
+                           nullptr);
+  }
+  return TRUE;
+}
+
+__attribute__((constructor)) static void papyrus_linux_install_widget_hook() {
+  if (g_papyrus_linux_container_add_hook_id != 0) {
+    return;
+  }
+
+  g_type_class_ref(GTK_TYPE_CONTAINER);
+
+  const guint add_signal_id = g_signal_lookup("add", GTK_TYPE_CONTAINER);
+  if (add_signal_id != 0) {
+    g_papyrus_linux_container_add_hook_id = g_signal_add_emission_hook(
+        add_signal_id, 0, papyrus_linux_container_add_emission_hook, nullptr,
+        nullptr);
+  }
+}
+
 static void ensure_overlay_container(PapyrusLinuxPlugin* self) {
   if (self->overlay != nullptr || self->flutter_view == nullptr) {
     return;
@@ -804,19 +929,7 @@ static void ensure_overlay_container(PapyrusLinuxPlugin* self) {
   GtkWidget* parent = gtk_widget_get_parent(flutter_widget);
   if (parent != nullptr && GTK_IS_OVERLAY(parent)) {
     self->overlay = parent;
-    GtkWidget* fixed =
-        GTK_WIDGET(g_object_get_data(G_OBJECT(parent), "papyrus-overlay-fixed"));
-    if (fixed == nullptr) {
-      fixed = gtk_fixed_new();
-      gtk_widget_set_halign(fixed, GTK_ALIGN_START);
-      gtk_widget_set_valign(fixed, GTK_ALIGN_START);
-      gtk_widget_set_hexpand(fixed, FALSE);
-      gtk_widget_set_vexpand(fixed, FALSE);
-      gtk_widget_show(fixed);
-      gtk_overlay_add_overlay(GTK_OVERLAY(parent), fixed);
-      g_object_set_data(G_OBJECT(parent), "papyrus-overlay-fixed", fixed);
-    }
-    self->fixed = fixed;
+    self->fixed = ensure_overlay_fixed_child(parent);
     return;
   }
 
@@ -830,22 +943,13 @@ static void ensure_overlay_container(PapyrusLinuxPlugin* self) {
 
   self->overlay = gtk_overlay_new();
   gtk_widget_show(self->overlay);
+  self->fixed = ensure_overlay_fixed_child(self->overlay);
 
   g_object_ref(flutter_widget);
   gtk_container_remove(GTK_CONTAINER(parent), flutter_widget);
   gtk_container_add(GTK_CONTAINER(parent), self->overlay);
   gtk_container_add(GTK_CONTAINER(self->overlay), flutter_widget);
   g_object_unref(flutter_widget);
-
-  self->fixed = gtk_fixed_new();
-  gtk_widget_set_halign(self->fixed, GTK_ALIGN_START);
-  gtk_widget_set_valign(self->fixed, GTK_ALIGN_START);
-  gtk_widget_set_hexpand(self->fixed, FALSE);
-  gtk_widget_set_vexpand(self->fixed, FALSE);
-  gtk_widget_show(self->fixed);
-  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->fixed);
-  g_object_set_data(G_OBJECT(self->overlay), "papyrus-overlay-fixed",
-                    self->fixed);
 }
 
 static gboolean web_view_is_attached(PapyrusLinuxPlugin* self) {

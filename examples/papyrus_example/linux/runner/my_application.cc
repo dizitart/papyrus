@@ -64,19 +64,8 @@ static void my_application_activate(GApplication* application) {
   // for transparent.
   gdk_rgba_parse(&background_color, "#000000");
   fl_view_set_background_color(view, &background_color);
-  GtkWidget* overlay = gtk_overlay_new();
-  gtk_widget_show(overlay);
-  GtkWidget* fixed = gtk_fixed_new();
-  gtk_widget_set_halign(fixed, GTK_ALIGN_START);
-  gtk_widget_set_valign(fixed, GTK_ALIGN_START);
-  gtk_widget_set_hexpand(fixed, FALSE);
-  gtk_widget_set_vexpand(fixed, FALSE);
-  gtk_widget_show(fixed);
-  gtk_container_add(GTK_CONTAINER(overlay), GTK_WIDGET(view));
-  gtk_overlay_add_overlay(GTK_OVERLAY(overlay), fixed);
-  g_object_set_data(G_OBJECT(overlay), "papyrus-overlay-fixed", fixed);
   gtk_widget_show(GTK_WIDGET(view));
-  gtk_container_add(GTK_CONTAINER(window), overlay);
+  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
 
   // Show the window when Flutter renders.
   // Requires the view to be realized so we can start rendering.

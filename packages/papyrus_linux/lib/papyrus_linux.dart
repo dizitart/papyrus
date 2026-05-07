@@ -32,10 +32,7 @@ class PapyrusLinux extends PapyrusPlatform {
     _ensureMethodHandlerInstalled();
     _resourceResolver = resolver;
     unawaited(
-      _invokeMethod<void>(
-        'setResourceResolverEnabled',
-        resolver != null,
-      ),
+      _invokeMethod<void>('setResourceResolverEnabled', resolver != null),
     );
   }
 
@@ -44,10 +41,7 @@ class PapyrusLinux extends PapyrusPlatform {
     _ensureMethodHandlerInstalled();
     _navigationResolver = resolver;
     unawaited(
-      _invokeMethod<void>(
-        'setNavigationResolverEnabled',
-        resolver != null,
-      ),
+      _invokeMethod<void>('setNavigationResolverEnabled', resolver != null),
     );
   }
 
@@ -136,9 +130,7 @@ class PapyrusLinux extends PapyrusPlatform {
 
   @override
   Future<PapyrusContentSize> getContentSize() async {
-    final map = await _invokeMapMethod(
-      'getContentSize',
-    );
+    final map = await _invokeMapMethod('getContentSize');
     return PapyrusContentSize(
       width: (map?['width'] as num? ?? 0).toDouble(),
       height: (map?['height'] as num? ?? 0).toDouble(),
@@ -167,9 +159,7 @@ class PapyrusLinux extends PapyrusPlatform {
 
   @override
   Future<PapyrusPlatformCapabilities> getCapabilities() async {
-    final map = await _invokeMapMethod(
-      'getCapabilities',
-    );
+    final map = await _invokeMapMethod('getCapabilities');
     return _capabilitiesFromMap(map) ??
         const PapyrusPlatformCapabilities(
           supportsResourceInterception: true,
@@ -280,8 +270,7 @@ PapyrusException _papyrusExceptionFromPlatformError(PlatformException error) {
     'sslFailed' => PapyrusErrorCode.sslFailed,
     'timeout' => PapyrusErrorCode.timeout,
     'rendererCrashed' => PapyrusErrorCode.rendererCrashed,
-    'unsupportedPlatformFeature' =>
-      PapyrusErrorCode.unsupportedPlatformFeature,
+    'unsupportedPlatformFeature' => PapyrusErrorCode.unsupportedPlatformFeature,
     'invalidLoadRequest' => PapyrusErrorCode.invalidLoadRequest,
     'webViewUnavailable' => PapyrusErrorCode.webViewUnavailable,
     _ => PapyrusErrorCode.unknown,
@@ -290,8 +279,9 @@ PapyrusException _papyrusExceptionFromPlatformError(PlatformException error) {
   final details = error.details;
   final uri = switch (details) {
     String value => Uri.tryParse(value),
-    Map<Object?, Object?> value when value['uri'] is String =>
-      Uri.tryParse(value['uri'] as String),
+    Map<Object?, Object?> value when value['uri'] is String => Uri.tryParse(
+      value['uri'] as String,
+    ),
     _ => null,
   };
 

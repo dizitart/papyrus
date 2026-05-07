@@ -2,3 +2,4 @@
 build/
 pubspec.lock
 
+examples/another_example
