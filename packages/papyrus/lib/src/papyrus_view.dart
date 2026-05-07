@@ -281,37 +281,35 @@ class _DesktopOverlaySurface extends StatefulWidget {
 }
 
 class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with WidgetsBindingObserver {
   final GlobalKey _key = GlobalKey();
-  late final Ticker _ticker;
   _ViewportSnapshot? _lastSent;
   bool _syncScheduled = false;
+  int _settleFramesRemaining = 0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _ticker = createTicker((_) => _scheduleViewportSync())..start();
-    _scheduleViewportSync();
+    _scheduleViewportSync(settleFrames: 2);
   }
 
   @override
   void didUpdateWidget(_DesktopOverlaySurface oldWidget) {
     super.didUpdateWidget(oldWidget);
     _lastSent = null;
-    _scheduleViewportSync();
+    _scheduleViewportSync(settleFrames: 2);
   }
 
   @override
   void didChangeMetrics() {
     _lastSent = null;
-    _scheduleViewportSync();
+    _scheduleViewportSync(settleFrames: 2);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _ticker.dispose();
     unawaited(
       widget.controller.setViewport(
         x: 0,
@@ -327,17 +325,27 @@ class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
 
   @override
   Widget build(BuildContext context) {
-    _scheduleViewportSync();
-    return MouseRegion(
-      opaque: false,
-      child: SizedBox.expand(
-        key: _key,
-        child: const ColoredBox(color: Colors.transparent),
+    _scheduleViewportSync(settleFrames: 1);
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        _lastSent = null;
+        _scheduleViewportSync(settleFrames: 1);
+        return false;
+      },
+      child: MouseRegion(
+        opaque: false,
+        child: SizedBox.expand(
+          key: _key,
+          child: const ColoredBox(color: Colors.transparent),
+        ),
       ),
     );
   }
 
-  void _scheduleViewportSync() {
+  void _scheduleViewportSync({int settleFrames = 0}) {
+    if (settleFrames > _settleFramesRemaining) {
+      _settleFramesRemaining = settleFrames;
+    }
     if (_syncScheduled) return;
     _syncScheduled = true;
     SchedulerBinding.instance.addPostFrameCallback((_) => _syncViewport());
@@ -363,20 +371,37 @@ class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
       devicePixelRatio: devicePixelRatio,
       visible: visible,
     );
-    if (snapshot == _lastSent) return;
-    _lastSent = snapshot;
+    final viewportReady =
+        snapshot.visible && snapshot.width > 0 && snapshot.height > 0;
+    final changed = snapshot != _lastSent;
+    if (changed) {
+      _lastSent = snapshot;
+      final controller = widget.controller;
     unawaited(
-      widget.controller.setViewport(
-        x: snapshot.x,
-        y: snapshot.y,
-        width: snapshot.width,
-        height: snapshot.height,
-        devicePixelRatio: snapshot.devicePixelRatio,
-        visible: snapshot.visible,
-      ),
+        controller
+            .setViewport(
+              x: snapshot.x,
+              y: snapshot.y,
+              width: snapshot.width,
+              height: snapshot.height,
+              devicePixelRatio: snapshot.devicePixelRatio,
+              visible: snapshot.visible,
+            )
+            .then((_) {
+              if (!mounted || widget.controller != controller) return;
+              if (_lastSent == snapshot && viewportReady) {
+                widget.onViewportReady();
+              }
+            }),
     );
-    if (snapshot.visible && snapshot.width > 0 && snapshot.height > 0) {
+    } else if (viewportReady) {
       widget.onViewportReady();
+    }
+    if (changed || _settleFramesRemaining > 0) {
+      if (_settleFramesRemaining > 0) {
+        _settleFramesRemaining -= 1;
+      }
+      _scheduleViewportSync();
     }
   }
 }

@@ -2,7 +2,10 @@
 
 #include <windows.h>
 #include <WebView2.h>
+#pragma warning(push)
+#pragma warning(disable : 4458)
 #include <WebView2EnvironmentOptions.h>
+#pragma warning(pop)
 
 #include <flutter/method_channel.h>
 #include <flutter/method_result_functions.h>
@@ -23,12 +26,19 @@
 #include <vector>
 #include <wrl.h>
 
+#if defined(FLUTTER_PLUGIN_IMPL)
+#define PAPYRUS_WINDOWS_PLUGIN_EXPORT __declspec(dllexport)
+#else
+#define PAPYRUS_WINDOWS_PLUGIN_EXPORT
+#endif
+
 namespace papyrus_windows {
 namespace {
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
 constexpr char kDefaultVirtualResourceScheme[] = "papyrus-resource";
+constexpr char kBlankDocumentUri[] = "about:blank";
 
 std::string StringFromValue(const flutter::EncodableMap& map,
                             const char* key) {
@@ -448,6 +458,15 @@ std::string UriScheme(const std::string& uri) {
   return Lowercase(uri.substr(0, separator));
 }
 
+bool IsBlankDocumentUri(const std::string& uri) {
+  return uri == kBlankDocumentUri;
+}
+
+template <typename SetType>
+bool ContainsValue(const SetType& set, const typename SetType::value_type& value) {
+  return set.find(value) != set.end();
+}
+
 std::string NavigationDecisionFor(const flutter::EncodableMap& configuration,
                                   const std::string& uri,
                                   bool is_main_frame,
@@ -456,7 +475,7 @@ std::string NavigationDecisionFor(const flutter::EncodableMap& configuration,
   const auto blocked_schemes = StringSetFromValue(
       FindValue(configuration, "navigationBlockedSchemes"),
       {"javascript", "data", "file"});
-  if (blocked_schemes.contains(scheme)) {
+  if (ContainsValue(blocked_schemes, scheme)) {
     return "block";
   }
 
@@ -475,14 +494,14 @@ std::string NavigationDecisionFor(const flutter::EncodableMap& configuration,
   const auto allowed_schemes =
       StringSetFromValue(FindValue(configuration, "navigationAllowedSchemes"),
                          {"https"});
-  if (allowed_schemes.contains(scheme)) {
+  if (ContainsValue(allowed_schemes, scheme)) {
     return "allow";
   }
 
   const auto external_schemes = StringSetFromValue(
       FindValue(configuration, "navigationExternalSchemes"),
       {"http", "https", "mailto", "tel"});
-  if (external_schemes.contains(scheme)) {
+  if (ContainsValue(external_schemes, scheme)) {
     if (BoolFromValue(configuration, "requireUserGestureForExternalOpen", true) &&
         !has_user_gesture) {
       return "block";
@@ -658,6 +677,29 @@ bool PapyrusWindowsPlugin::ConsumeAppInitiatedNavigation(
   return !uri.empty() && app_initiated_navigations_.erase(uri) > 0;
 }
 
+std::string PapyrusWindowsPlugin::AppInitiatedUriForRequest(
+    const flutter::EncodableMap& request) const {
+  const std::string type = StringFromValue(request, "type");
+  if (type == "uri") {
+    return StringFromValue(request, "uri");
+  }
+  if (type == "file") {
+    const std::string absolute_path = StringFromValue(request, "absolutePath");
+    return absolute_path.empty() ? std::string()
+                                 : WideToUtf8(FileUriFromPath(absolute_path));
+  }
+  if (type == "html") {
+    const std::string base_uri = StringFromValue(request, "baseUri");
+    return base_uri.empty() ? kBlankDocumentUri : base_uri;
+  }
+  return std::string();
+}
+
+std::string PapyrusWindowsPlugin::EffectiveCurrentUriForSource(
+    const std::string& source) const {
+  return source.empty() || IsBlankDocumentUri(source) ? current_uri_ : source;
+}
+
 void PapyrusWindowsPlugin::RegisterNavigationInterceptor() {
   if (!webview_) {
     return;
@@ -710,7 +752,7 @@ HRESULT PapyrusWindowsPlugin::HandleNavigationStarting(
   }
 
   if (ConsumeAppInitiatedNavigation(uri)) {
-    current_uri_ = uri;
+    current_uri_ = EffectiveCurrentUriForSource(uri);
     progress_ = 0.0;
     return S_OK;
   }
@@ -724,7 +766,7 @@ HRESULT PapyrusWindowsPlugin::HandleNavigationStarting(
   const auto apply_decision = [this, uri, uri_wide](const std::string& decision) {
     if (decision == "allow") {
       MarkAppInitiatedNavigation(uri);
-      current_uri_ = uri;
+      current_uri_ = EffectiveCurrentUriForSource(uri);
       progress_ = 0.0;
       if (webview_) {
         webview_->Navigate(uri_wide.c_str());
@@ -736,7 +778,7 @@ HRESULT PapyrusWindowsPlugin::HandleNavigationStarting(
 
   if (!navigation_resolver_enabled_ || !channel_) {
     if (fallback == "allow") {
-      current_uri_ = uri;
+      current_uri_ = EffectiveCurrentUriForSource(uri);
       progress_ = 0.0;
       return S_OK;
     }
@@ -790,7 +832,7 @@ HRESULT PapyrusWindowsPlugin::HandleNewWindowRequested(
   const auto apply_decision = [this, uri, uri_wide](const std::string& decision) {
     if (decision == "allow") {
       MarkAppInitiatedNavigation(uri);
-      current_uri_ = uri;
+      current_uri_ = EffectiveCurrentUriForSource(uri);
       progress_ = 0.0;
       if (webview_) {
         webview_->Navigate(uri_wide.c_str());
@@ -881,6 +923,9 @@ void PapyrusWindowsPlugin::EnsureWebView() {
                 return S_OK;
               }
               webview2_available_ = false;
+              FailPendingCreateResults(
+                  "webViewUnavailable",
+                  "Microsoft Edge WebView2 Runtime is not available. Install the WebView2 Runtime to render Papyrus on Windows.");
               return S_OK;
             }
             environment_ = environment;
@@ -895,6 +940,9 @@ void PapyrusWindowsPlugin::EnsureWebView() {
                           return S_OK;
                         }
                         webview2_available_ = false;
+                        FailPendingCreateResults(
+                            "webViewUnavailable",
+                            "Microsoft Edge WebView2 Runtime is not available. Install the WebView2 Runtime to render Papyrus on Windows.");
                         return S_OK;
                       }
                       controller_ = controller;
@@ -903,7 +951,8 @@ void PapyrusWindowsPlugin::EnsureWebView() {
                       RegisterResourceInterceptor();
                       ApplySettings();
                       ApplyBounds();
-                      RunPendingLoad();
+                      CompletePendingCreateResults();
+                      SchedulePendingLoad();
                       return S_OK;
                     })
                     .Get());
@@ -918,6 +967,9 @@ void PapyrusWindowsPlugin::EnsureWebView() {
       return;
     }
     webview2_available_ = false;
+    FailPendingCreateResults(
+        "webViewUnavailable",
+        "Microsoft Edge WebView2 Runtime is not available. Install the WebView2 Runtime to render Papyrus on Windows.");
   }
 }
 
@@ -1110,12 +1162,39 @@ void PapyrusWindowsPlugin::ApplyBounds() {
   controller_->put_IsVisible(visible_ ? TRUE : FALSE);
 }
 
+bool PapyrusWindowsPlugin::CanPresentContent() const {
+  return visible_;
+}
+
+void PapyrusWindowsPlugin::CompletePendingCreateResults() {
+  for (auto& pending_result : pending_create_results_) {
+    pending_result->Success();
+  }
+  pending_create_results_.clear();
+}
+
+void PapyrusWindowsPlugin::FailPendingCreateResults(
+    const std::string& code,
+    const std::string& message) {
+  for (auto& pending_result : pending_create_results_) {
+    pending_result->Error(code, message);
+  }
+  pending_create_results_.clear();
+}
+
 void PapyrusWindowsPlugin::RunPendingLoad() {
-  if (pending_load_.empty() || !webview_) {
+  if (pending_load_.empty() || !webview_ || !CanPresentContent()) {
     return;
   }
   LoadRequest(pending_load_);
   pending_load_.clear();
+}
+
+void PapyrusWindowsPlugin::SchedulePendingLoad() {
+  if (pending_load_.empty() || !webview_ || !CanPresentContent()) {
+    return;
+  }
+  RunPendingLoad();
 }
 
 flutter::EncodableValue PapyrusWindowsPlugin::DebugOverlayState() const {
@@ -1143,25 +1222,27 @@ flutter::EncodableValue PapyrusWindowsPlugin::DebugOverlayState() const {
 void PapyrusWindowsPlugin::LoadRequest(
     const flutter::EncodableMap& request) {
   UpdateVirtualResources(request);
-  if (!webview_) {
+  if (!webview_ || !CanPresentContent()) {
     pending_load_ = request;
     EnsureWebView();
+    SchedulePendingLoad();
     return;
   }
 
   const std::string type = StringFromValue(request, "type");
+  const std::string app_initiated_uri = AppInitiatedUriForRequest(request);
   if (type == "uri") {
     current_uri_ = StringFromValue(request, "uri");
-    MarkAppInitiatedNavigation(current_uri_);
+    MarkAppInitiatedNavigation(app_initiated_uri);
     webview_->Navigate(Utf8ToWide(current_uri_).c_str());
   } else if (type == "file") {
     current_uri_ = StringFromValue(request, "absolutePath");
     const std::wstring file_uri = FileUriFromPath(current_uri_);
-    MarkAppInitiatedNavigation(WideToUtf8(file_uri));
+    MarkAppInitiatedNavigation(app_initiated_uri);
     webview_->Navigate(file_uri.c_str());
   } else if (type == "html") {
     current_uri_ = StringFromValue(request, "baseUri");
-    MarkAppInitiatedNavigation(current_uri_);
+    MarkAppInitiatedNavigation(app_initiated_uri);
     webview_->NavigateToString(Utf8ToWide(StringFromValue(request, "html")).c_str());
   }
   title_ = current_uri_.empty() ? "Papyrus Document" : current_uri_;
@@ -1227,6 +1308,7 @@ void PapyrusWindowsPlugin::SetViewport(
              bounds_.right > bounds_.left && bounds_.bottom > bounds_.top;
   ApplyBounds();
   EnsureWebView();
+  SchedulePendingLoad();
 }
 
 std::optional<LRESULT> PapyrusWindowsPlugin::HandleWindowProc(
@@ -1234,8 +1316,12 @@ std::optional<LRESULT> PapyrusWindowsPlugin::HandleWindowProc(
     UINT message,
     WPARAM wparam,
     LPARAM lparam) {
-  if (message == WM_SIZE || message == WM_MOVE) {
-    ApplyBounds();
+  (void)wparam;
+  (void)lparam;
+  if (hwnd == hwnd_ &&
+      (message == WM_SHOWWINDOW || message == WM_WINDOWPOSCHANGED ||
+       message == WM_SIZE)) {
+    SchedulePendingLoad();
   }
   return std::nullopt;
 }
@@ -1269,7 +1355,13 @@ void PapyrusWindowsPlugin::HandleMethodCall(
         StringFromValue(configuration_, "hardwareAcceleration") == "software";
     created_ = true;
     EnsureWebView();
-    result->Success();
+    if (webview_) {
+      ApplySettings();
+      SchedulePendingLoad();
+      result->Success();
+    } else {
+      pending_create_results_.push_back(std::move(result));
+    }
   } else if (method == "setViewport") {
     if (!webview2_available_) {
       UnsupportedWebView2(std::move(result));
@@ -1435,7 +1527,7 @@ void PapyrusWindowsPlugin::HandleMethodCall(
     if (webview_) {
       LPWSTR raw_source = nullptr;
       if (SUCCEEDED(webview_->get_Source(&raw_source)) && raw_source != nullptr) {
-        current_uri = WideToUtf8(raw_source);
+        current_uri = EffectiveCurrentUriForSource(WideToUtf8(raw_source));
         CoTaskMemFree(raw_source);
       }
     }
@@ -1513,3 +1605,10 @@ void PapyrusWindowsPlugin::HandleMethodCall(
 }
 
 }  // namespace papyrus_windows
+
+PAPYRUS_WINDOWS_PLUGIN_EXPORT void PapyrusWindowsPluginRegisterWithRegistrar(
+    FlutterDesktopPluginRegistrarRef registrar) {
+  papyrus_windows::PapyrusWindowsPlugin::RegisterWithRegistrar(
+      flutter::PluginRegistrarManager::GetInstance()
+          ->GetRegistrar<flutter::PluginRegistrarWindows>(registrar));
+}

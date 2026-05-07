@@ -87,12 +87,28 @@ if (NOT EXISTS "${WEBVIEW2_ROOT}/build/native/include/WebView2.h")
   endif()
 endif()
 
-if (CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64|aarch64|AARCH64")
-  set(WEBVIEW2_ARCH "arm64")
-elseif (CMAKE_SIZEOF_VOID_P EQUAL 8)
-  set(WEBVIEW2_ARCH "x64")
-else()
-  set(WEBVIEW2_ARCH "x86")
+if (DEFINED FLUTTER_TARGET_PLATFORM)
+  if (FLUTTER_TARGET_PLATFORM STREQUAL "windows-arm64")
+    set(WEBVIEW2_ARCH "arm64")
+  elseif (FLUTTER_TARGET_PLATFORM STREQUAL "windows-x64")
+    set(WEBVIEW2_ARCH "x64")
+  elseif (FLUTTER_TARGET_PLATFORM STREQUAL "windows-x86")
+    set(WEBVIEW2_ARCH "x86")
+  endif()
+endif()
+
+if (NOT DEFINED WEBVIEW2_ARCH)
+  if (CMAKE_VS_PLATFORM_NAME STREQUAL "ARM64")
+    set(WEBVIEW2_ARCH "arm64")
+  elseif (CMAKE_VS_PLATFORM_NAME STREQUAL "x64")
+    set(WEBVIEW2_ARCH "x64")
+  elseif (CMAKE_VS_PLATFORM_NAME STREQUAL "Win32")
+    set(WEBVIEW2_ARCH "x86")
+  elseif (CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(WEBVIEW2_ARCH "x64")
+  else()
+    set(WEBVIEW2_ARCH "x86")
+  endif()
 endif()
 
 target_include_directories(${PLUGIN_NAME} PRIVATE
@@ -120,6 +136,9 @@ enable_testing()
 
 # Add the Google Test dependency.
 include(FetchContent)
+if (NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE STRING "Minimum policy version for bundled test dependencies" FORCE)
+endif()
 FetchContent_Declare(
   googletest
   URL https://github.com/google/googletest/archive/release-1.11.0.zip

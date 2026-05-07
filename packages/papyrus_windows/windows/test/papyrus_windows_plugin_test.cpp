@@ -8,7 +8,9 @@
 #include <string>
 #include <variant>
 
+#define private public
 #include "papyrus_windows_plugin.h"
+#undef private
 
 namespace papyrus_windows {
 namespace test {
@@ -37,6 +39,39 @@ TEST(PapyrusWindowsPlugin, GetPlatformVersion) {
   // Since the exact string varies by host, just ensure that it's a string
   // with the expected format.
   EXPECT_TRUE(result_string.rfind("Windows ", 0) == 0);
+}
+
+TEST(PapyrusWindowsPlugin, HtmlRequestUsesAboutBlankForAppInitiatedUri) {
+  PapyrusWindowsPlugin plugin;
+
+  EncodableMap request = {
+      {EncodableValue("type"), EncodableValue("html")},
+      {EncodableValue("html"), EncodableValue("<p>Hello</p>")},
+  };
+
+  EXPECT_EQ(plugin.AppInitiatedUriForRequest(request), "about:blank");
+}
+
+TEST(PapyrusWindowsPlugin, EffectiveCurrentUriHidesInternalAboutBlankSource) {
+  PapyrusWindowsPlugin plugin;
+  plugin.current_uri_ = "https://viewer.example/document";
+
+  EXPECT_EQ(plugin.EffectiveCurrentUriForSource("about:blank"),
+            "https://viewer.example/document");
+  EXPECT_EQ(plugin.EffectiveCurrentUriForSource(""),
+            "https://viewer.example/document");
+  EXPECT_EQ(plugin.EffectiveCurrentUriForSource("https://example.com"),
+            "https://example.com");
+}
+
+TEST(PapyrusWindowsPlugin, CanPresentContentRequiresVisibleViewport) {
+  PapyrusWindowsPlugin plugin;
+
+  plugin.visible_ = true;
+  EXPECT_TRUE(plugin.CanPresentContent());
+
+  plugin.visible_ = false;
+  EXPECT_FALSE(plugin.CanPresentContent());
 }
 
 }  // namespace test

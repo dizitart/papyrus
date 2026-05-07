@@ -78,7 +78,7 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(platform.created, isTrue);
     expect(platform.loaded.single, isA<PapyrusHtmlRequest>());
@@ -90,6 +90,54 @@ void main() {
       find.textContaining('Papyrus native WebView embedding is not available'),
       findsNothing,
     );
+  });
+
+  testWidgets('PapyrusView desktop overlay settles after viewport sync', (
+    tester,
+  ) async {
+    final platform = OverlayPapyrusPlatform();
+    PapyrusPlatform.instance = platform;
+    final controller = PapyrusController.create();
+
+    await tester.pumpWidget(
+      SizedBox(
+        width: 320,
+        height: 180,
+        child: PapyrusView(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.binding.hasScheduledFrame, isFalse);
+  });
+
+  testWidgets('PapyrusView waits for overlay viewport application before initial load', (
+    tester,
+  ) async {
+    final platform = DelayedViewportOverlayPapyrusPlatform();
+    PapyrusPlatform.instance = platform;
+    final controller = PapyrusController.create();
+
+    await tester.pumpWidget(
+      SizedBox(
+        width: 320,
+        height: 180,
+        child: PapyrusView(
+          controller: controller,
+          initialRequest: const PapyrusHtmlRequest(html: '<p>Overlay</p>'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(platform.viewports, isNotEmpty);
+    expect(platform.loaded, isEmpty);
+
+    platform.completeViewportSync();
+    await tester.pump();
+
+    expect(platform.loaded, hasLength(1));
+    expect(platform.loaded.single, isA<PapyrusHtmlRequest>());
   });
 
   testWidgets('PapyrusView reloads when the initial request changes', (
@@ -654,6 +702,38 @@ class OverlayPapyrusPlatform extends RecordingPapyrusPlatform {
       'devicePixelRatio': devicePixelRatio,
       'visible': visible,
     });
+  }
+}
+
+class DelayedViewportOverlayPapyrusPlatform extends OverlayPapyrusPlatform {
+  Completer<void>? _firstViewportCompleter = Completer<void>();
+
+  @override
+  Future<void> setViewport({
+    required double x,
+    required double y,
+    required double width,
+    required double height,
+    required double devicePixelRatio,
+    required bool visible,
+  }) async {
+    await super.setViewport(
+      x: x,
+      y: y,
+      width: width,
+      height: height,
+      devicePixelRatio: devicePixelRatio,
+      visible: visible,
+    );
+    final completer = _firstViewportCompleter;
+    if (completer != null) {
+      await completer.future;
+      _firstViewportCompleter = null;
+    }
+  }
+
+  void completeViewportSync() {
+    _firstViewportCompleter?.complete();
   }
 }
 

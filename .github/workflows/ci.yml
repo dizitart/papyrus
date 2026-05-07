@@ -22,3 +22,20 @@ jobs:
       - run: cd packages/papyrus_windows && flutter analyze
       - run: cd packages/papyrus_linux && flutter analyze
       - run: flutter test test/acceptance_test.dart
+
+  windows-native-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - uses: ilammy/msvc-dev-cmd@v1
+      - shell: pwsh
+        run: |
+          Set-Location examples/papyrus_example
+          flutter pub get
+          flutter build windows --debug
+          cmake -S windows -B build/windows/x64 "-Dinclude_papyrus_windows_tests=ON" "-DCMAKE_POLICY_VERSION_MINIMUM=3.10"
+          cmake --build build/windows/x64 --config Debug --target papyrus_windows_test -- /nologo /verbosity:minimal /clp:ErrorsOnly
+          ctest --test-dir build/windows/x64/plugins/papyrus_windows -C Debug --output-on-failure
