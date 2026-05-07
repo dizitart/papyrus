@@ -32,7 +32,7 @@ class PapyrusLinux extends PapyrusPlatform {
     _ensureMethodHandlerInstalled();
     _resourceResolver = resolver;
     unawaited(
-      _channel.invokeMethod<void>(
+      _invokeMethod<void>(
         'setResourceResolverEnabled',
         resolver != null,
       ),
@@ -44,7 +44,7 @@ class PapyrusLinux extends PapyrusPlatform {
     _ensureMethodHandlerInstalled();
     _navigationResolver = resolver;
     unawaited(
-      _channel.invokeMethod<void>(
+      _invokeMethod<void>(
         'setNavigationResolverEnabled',
         resolver != null,
       ),
@@ -58,7 +58,7 @@ class PapyrusLinux extends PapyrusPlatform {
     final config = _configurationMap(configuration);
     config['navigationResolverEnabled'] = _navigationResolver != null;
     config['resourceResolverEnabled'] = _resourceResolver != null;
-    return _channel.invokeMethod<void>('create', config);
+    return _invokeMethod<void>('create', config);
   }
 
   @override
@@ -70,7 +70,7 @@ class PapyrusLinux extends PapyrusPlatform {
     required double devicePixelRatio,
     required bool visible,
   }) {
-    return _channel.invokeMethod<void>('setViewport', {
+    return _invokeMethod<void>('setViewport', {
       'x': x,
       'y': y,
       'width': width,
@@ -83,51 +83,51 @@ class PapyrusLinux extends PapyrusPlatform {
   @override
   Future<void> load(PapyrusLoadRequest request) {
     request.validate();
-    return _channel.invokeMethod<void>('load', request.toMap());
+    return _invokeMethod<void>('load', request.toMap());
   }
 
   @override
-  Future<void> reload() => _channel.invokeMethod<void>('reload');
+  Future<void> reload() => _invokeMethod<void>('reload');
 
   @override
-  Future<void> stopLoading() => _channel.invokeMethod<void>('stopLoading');
+  Future<void> stopLoading() => _invokeMethod<void>('stopLoading');
 
   @override
   Future<bool> canGoBack() async =>
-      await _channel.invokeMethod<bool>('canGoBack') ?? false;
+      await _invokeMethod<bool>('canGoBack') ?? false;
 
   @override
   Future<bool> canGoForward() async =>
-      await _channel.invokeMethod<bool>('canGoForward') ?? false;
+      await _invokeMethod<bool>('canGoForward') ?? false;
 
   @override
-  Future<void> goBack() => _channel.invokeMethod<void>('goBack');
+  Future<void> goBack() => _invokeMethod<void>('goBack');
 
   @override
-  Future<void> goForward() => _channel.invokeMethod<void>('goForward');
+  Future<void> goForward() => _invokeMethod<void>('goForward');
 
   @override
   Future<Uri?> currentUri() async {
-    final value = await _channel.invokeMethod<String>('currentUri');
+    final value = await _invokeMethod<String>('currentUri');
     return value == null ? null : Uri.tryParse(value);
   }
 
   @override
-  Future<String?> title() => _channel.invokeMethod<String>('title');
+  Future<String?> title() => _invokeMethod<String>('title');
 
   @override
   Future<double> estimatedProgress() async {
-    final value = await _channel.invokeMethod<num>('estimatedProgress');
+    final value = await _invokeMethod<num>('estimatedProgress');
     return value?.toDouble() ?? 0;
   }
 
   @override
   Future<Object?> evaluateJavaScript(String source) =>
-      _channel.invokeMethod<Object?>('evaluateJavaScript', source);
+      _invokeMethod<Object?>('evaluateJavaScript', source);
 
   @override
   Future<String?> selectedText() async {
-    final value = await _channel.invokeMethod<String>('selectedText');
+    final value = await _invokeMethod<String>('selectedText');
     if (value == null || value.isEmpty) {
       return null;
     }
@@ -136,7 +136,7 @@ class PapyrusLinux extends PapyrusPlatform {
 
   @override
   Future<PapyrusContentSize> getContentSize() async {
-    final map = await _channel.invokeMapMethod<String, Object?>(
+    final map = await _invokeMapMethod(
       'getContentSize',
     );
     return PapyrusContentSize(
@@ -147,27 +147,27 @@ class PapyrusLinux extends PapyrusPlatform {
 
   @override
   Future<Uint8List> captureSnapshot({PapyrusSnapshotOptions? options}) async {
-    final bytes = await _channel.invokeMethod<Uint8List>('captureSnapshot');
+    final bytes = await _invokeMethod<Uint8List>('captureSnapshot');
     return bytes ?? Uint8List(0);
   }
 
   @override
   Future<void> printDocument({PapyrusPrintOptions? options}) =>
-      _channel.invokeMethod<void>('printDocument');
+      _invokeMethod<void>('printDocument');
 
   @override
-  Future<void> clearCache() => _channel.invokeMethod<void>('clearCache');
+  Future<void> clearCache() => _invokeMethod<void>('clearCache');
 
   @override
   Future<void> clearStorage(PapyrusStorageClearOptions options) =>
-      _channel.invokeMethod<void>('clearStorage');
+      _invokeMethod<void>('clearStorage');
 
   @override
-  Future<void> dispose() => _channel.invokeMethod<void>('dispose');
+  Future<void> dispose() => _invokeMethod<void>('dispose');
 
   @override
   Future<PapyrusPlatformCapabilities> getCapabilities() async {
-    final map = await _channel.invokeMapMethod<String, Object?>(
+    final map = await _invokeMapMethod(
       'getCapabilities',
     );
     return _capabilitiesFromMap(map) ??
@@ -205,6 +205,22 @@ PapyrusPlatformCapabilities? _capabilitiesFromMap(Map<String, Object?>? map) {
 }
 
 extension on PapyrusLinux {
+  Future<T?> _invokeMethod<T>(String method, [Object? arguments]) async {
+    try {
+      return await _channel.invokeMethod<T>(method, arguments);
+    } on PlatformException catch (error) {
+      throw _papyrusExceptionFromPlatformError(error);
+    }
+  }
+
+  Future<Map<String, Object?>?> _invokeMapMethod(String method) async {
+    try {
+      return await _channel.invokeMapMethod<String, Object?>(method);
+    } on PlatformException catch (error) {
+      throw _papyrusExceptionFromPlatformError(error);
+    }
+  }
+
   void _ensureMethodHandlerInstalled() {
     if (_methodHandlerInstalled) {
       return;
@@ -254,6 +270,32 @@ extension on PapyrusLinux {
         return null;
     }
   }
+}
+
+PapyrusException _papyrusExceptionFromPlatformError(PlatformException error) {
+  final code = switch (error.code) {
+    'navigationBlocked' => PapyrusErrorCode.navigationBlocked,
+    'resourceBlocked' => PapyrusErrorCode.resourceBlocked,
+    'networkFailed' => PapyrusErrorCode.networkFailed,
+    'sslFailed' => PapyrusErrorCode.sslFailed,
+    'timeout' => PapyrusErrorCode.timeout,
+    'rendererCrashed' => PapyrusErrorCode.rendererCrashed,
+    'unsupportedPlatformFeature' =>
+      PapyrusErrorCode.unsupportedPlatformFeature,
+    'invalidLoadRequest' => PapyrusErrorCode.invalidLoadRequest,
+    'webViewUnavailable' => PapyrusErrorCode.webViewUnavailable,
+    _ => PapyrusErrorCode.unknown,
+  };
+
+  final details = error.details;
+  final uri = switch (details) {
+    String value => Uri.tryParse(value),
+    Map<Object?, Object?> value when value['uri'] is String =>
+      Uri.tryParse(value['uri'] as String),
+    _ => null,
+  };
+
+  return PapyrusException(code, error.message ?? error.code, uri: uri);
 }
 
 Map<Object?, Object?> _mapArguments(Object? arguments) {

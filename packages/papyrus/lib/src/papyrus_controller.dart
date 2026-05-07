@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/services.dart';
 import 'package:papyrus_platform_interface/papyrus_platform_interface.dart';
 
