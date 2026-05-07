@@ -25,11 +25,15 @@ The macOS implementation SHALL use `WKWebView` and align with iOS behavior while
 - **THEN** Papyrus uses WKWebView print support or returns a structured unsupported-feature error
 
 ### Requirement: Windows WebView2
-The Windows implementation SHALL use Microsoft Edge WebView2, clearly detect and report missing WebView2 Runtime, configure user data or ephemeral behavior where possible, apply CoreWebView2 settings from policy, intercept navigation and web resources, map virtual resources through request interception, and surface process failure events.
+The Windows implementation SHALL use Microsoft Edge WebView2, clearly detect and report missing WebView2 Runtime, configure user data or ephemeral behavior where possible, apply CoreWebView2 settings from policy, intercept navigation and web resources, map virtual resources through request interception, surface process failure events, and keep desktop-overlay viewport synchronization aligned with initial content presentation.
 
 #### Scenario: Missing WebView2 runtime
 - **WHEN** WebView2 Runtime is not available
 - **THEN** Papyrus reports `webViewUnavailable` with clear diagnostics
+
+#### Scenario: Overlay startup synchronization on Windows
+- **WHEN** Papyrus creates a Windows desktop-overlay view with an initial request
+- **THEN** initial load waits for viewport synchronization so first presentation does not race zero-sized bounds
 
 ### Requirement: Linux WebKitGTK
 The Linux implementation SHALL use WebKitGTK, document required system packages, configure WebKit settings from Papyrus policy, support navigation interception, support resource interception where feasible, and document feature parity limits.

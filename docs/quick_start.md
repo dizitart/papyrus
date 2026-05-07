@@ -23,3 +23,6 @@ On macOS, sandboxed apps must include the
 content reliably. Add it to both `DebugProfile.entitlements` and
 `Release.entitlements` in the host runner.
 
+On Windows, ensure Microsoft Edge WebView2 Runtime is installed. If it is not
+available, Papyrus reports `webViewUnavailable` with a host-readable message.
+

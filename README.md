@@ -43,6 +43,47 @@ Papyrus is designed for controlled HTML rendering use-cases — document viewers
 
 Sandboxed macOS apps must include the `com.apple.security.network.client` entitlement in both `DebugProfile.entitlements` and `Release.entitlements` for `WKWebView` to load content reliably.
 
+### Windows
+
+Windows hosts must have Microsoft Edge WebView2 Runtime installed.
+Papyrus links the WebView2 loader statically — `WebView2Loader.dll` does not
+need to be shipped with the app.
+
+| Distribution strategy | Installer | Best for |
+|---|---|---|
+| Evergreen Bootstrapper | `MicrosoftEdgeWebView2Setup.exe /silent /install` | Consumer apps with internet access |
+| Evergreen Standalone | Architecture-specific offline installer from Microsoft | Offline or enterprise |
+
+If runtime creation fails, Papyrus surfaces a structured `webViewUnavailable`
+error. See [`papyrus_windows` README](packages/papyrus_windows/README.md) for
+the full packaging checklist.
+
+### macOS
+
+WKWebView is a system framework included with macOS — no WebKit redistributable
+is needed in the app bundle. Minimum supported macOS is 10.15 (Catalina).
+
+For notarized and App Store distributions, include the
+`com.apple.security.network.client` entitlement in both `DebugProfile.entitlements`
+and `Release.entitlements` so WKWebView can make network connections.
+
+### Linux
+
+Linux hosts must have WebKitGTK installed via the system package manager.
+Papyrus probes for `webkit2gtk-4.1` first and falls back to `webkit2gtk-4.0`.
+
+| Distribution | webkit2gtk 4.1 package | webkit2gtk 4.0 fallback |
+|---|---|---|
+| Ubuntu 22.04 LTS / Debian 12 | `libwebkit2gtk-4.1-0` | `libwebkit2gtk-4.0-0` |
+| Ubuntu 24.04 LTS | `libwebkit2gtk-4.1-0` | — |
+| Fedora 39+ | `webkit2gtk4.1` | `webkit2gtk3` |
+| openSUSE Tumbleweed | `libwebkit2gtk3-4_1-0` | `libwebkit2gtk3-0` |
+| Arch Linux | `webkit2gtk-4.1` | `webkit2gtk` |
+
+GTK 3 (`gtk+-3.0`) is also required; it is present by default on all major
+desktop distributions. See [`papyrus_linux` README](packages/papyrus_linux/README.md)
+for distro-specific install commands and AppImage/Snap guidance.
+
 ---
 
 ## Installation

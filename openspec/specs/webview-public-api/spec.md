@@ -17,6 +17,10 @@ Papyrus SHALL expose a `PapyrusController` that supports loading HTML strings, U
 - **WHEN** the host loads content, queries progress and title, captures a snapshot, clears storage, and disposes the controller
 - **THEN** each operation completes through the shared controller contract or returns a structured unsupported/error result
 
+#### Scenario: HTML load keeps logical current URI on Windows
+- **WHEN** HTML content is loaded through `PapyrusHtmlRequest` on Windows WebView2 and the internal source becomes `about:blank`
+- **THEN** Papyrus reports the logical current URI from the request context instead of exposing the internal `about:blank` transition as the host-facing current URI
+
 ### Requirement: Load Request Models
 Papyrus SHALL define typed load request models for HTML, URI, file, and byte-data loads, including base URI, headers, metadata, MIME type, encoding, and virtual resources where applicable.
 
