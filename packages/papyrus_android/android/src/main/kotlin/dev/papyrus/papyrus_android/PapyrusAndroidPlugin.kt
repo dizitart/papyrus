@@ -30,9 +30,11 @@ import io.flutter.plugin.platform.PlatformView
 import io.flutter.plugin.platform.PlatformViewFactory
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.WeakHashMap
 
 private data class PapyrusAndroidInlineResource(
     val bytes: ByteArray,
@@ -77,6 +79,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private var currentConfiguration: Map<*, *> = emptyMap<Any, Any>()
     private val appInitiatedNavigations = mutableSetOf<String>()
     private val virtualResources = mutableMapOf<String, PapyrusAndroidInlineResource>()
+    private val destroyedWebViews = Collections.newSetFromMap(WeakHashMap<WebView, Boolean>())
 
     private companion object {
         const val SELECTED_TEXT_SCRIPT =
@@ -97,6 +100,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         channel.setMethodCallHandler(null)
         destroyWebView(webView)
         webView = null
+        destroyedWebViews.clear()
         currentConfiguration = emptyMap<Any, Any>()
         appInitiatedNavigations.clear()
         pendingLoad = null
@@ -180,6 +184,7 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         navigationResolverEnabled = config["navigationResolverEnabled"] as? Boolean ?: navigationResolverEnabled
         resourceResolverEnabled = config["resourceResolverEnabled"] as? Boolean ?: resourceResolverEnabled
         val view = WebView(appContext)
+        destroyedWebViews.remove(view)
         resourcePolicy = resourcePolicyFromConfig(config)
         navigationPolicy = navigationPolicyFromConfig(config)
         configureWebView(view, config)
@@ -198,6 +203,9 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private fun destroyWebView(view: WebView?) {
         val target = view ?: return
+        if (!destroyedWebViews.add(target)) {
+            return
+        }
         try {
             target.stopLoading()
             target.onPause()
