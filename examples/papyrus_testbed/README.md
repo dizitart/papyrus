@@ -69,6 +69,11 @@ MIME email extraction behavior.
 	- Raw HTML renderer flow.
 	- Raw MIME parser + extractor flow.
 	- Papyrus preview surface with viewport framing.
+- Desktop preview scrolling adjustment:
+	- Added an explicit shared `ScrollController` for the desktop preview
+		`Scrollbar` and `SingleChildScrollView` pairing.
+	- Reason: avoids Flutter desktop assertion on Windows,
+		`Scrollbar's ScrollController has no ScrollPosition attached`.
 
 ## Run locally
 

@@ -67,6 +67,8 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
   final TextEditingController _mimeInputController = TextEditingController(
     text: _defaultMime,
   );
+  final ScrollController _rawHtmlScrollController = ScrollController();
+  final ScrollController _mimeScrollController = ScrollController();
 
   final PapyrusController _rawHtmlPreviewController =
       PapyrusController.create();
@@ -95,6 +97,8 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
   void dispose() {
     _htmlInputController.dispose();
     _mimeInputController.dispose();
+    _rawHtmlScrollController.dispose();
+    _mimeScrollController.dispose();
     _rawHtmlPreviewController.dispose();
     _mimePreviewController.dispose();
     super.dispose();
@@ -275,6 +279,7 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
                     editor: _buildRawHtmlEditor(),
                     preview: _buildPapyrusPreview(
                       controller: _rawHtmlPreviewController,
+                      scrollController: _rawHtmlScrollController,
                       initialHtml: _defaultHtml,
                       simulateViewport: canSwitchViewport,
                     ),
@@ -286,6 +291,7 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
                     editor: _buildMimeEditor(),
                     preview: _buildPapyrusPreview(
                       controller: _mimePreviewController,
+                      scrollController: _mimeScrollController,
                       initialHtml: _initialMimeHtml,
                       summary: _mimeSummary,
                       simulateViewport: canSwitchViewport,
@@ -331,6 +337,7 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
         return Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Expanded(flex: 5, child: editor),
               const SizedBox(width: 12),
@@ -460,6 +467,7 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
 
   Widget _buildPapyrusPreview({
     required PapyrusController controller,
+    required ScrollController scrollController,
     required String initialHtml,
     required bool simulateViewport,
     String? summary,
@@ -541,13 +549,19 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
                       );
                     }
                     return Scrollbar(
+                      controller: scrollController,
                       thumbVisibility: true,
                       child: SingleChildScrollView(
+                        controller: scrollController,
+                        primary: false,
                         padding: const EdgeInsets.all(12),
                         child: Center(
                           child: Container(
                             width: resolvedViewport.width,
-                            height: contentHeight,
+                            height: math.max(
+                              contentHeight,
+                              constraints.maxHeight - 24.0,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               border: Border.all(
