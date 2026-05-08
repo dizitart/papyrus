@@ -45,9 +45,7 @@ const _propagationDelay = Duration(seconds: 60);
 ///   papyrus_foo:
 ///     path: ../papyrus_foo
 /// ```
-final _pathDepPattern = RegExp(
-  r'  (papyrus_[a-z_]+):\n    path: \.\./\1',
-);
+final _pathDepPattern = RegExp(r'  (papyrus_[a-z_]+):\n    path: \.\./\1');
 
 void main(List<String> args) async {
   final dryRun = args.contains('--dry-run');
@@ -72,7 +70,7 @@ void main(List<String> args) async {
   for (var i = 0; i < _packages.length; i++) {
     final pkgDir = _packages[i];
     final pkgName = pkgDir.split('/').last;
-    _log('\n[${ i + 1}/${_packages.length}] Publishing $pkgName ...');
+    _log('\n[${i + 1}/${_packages.length}] Publishing $pkgName ...');
 
     final pubspecFile = File('$pkgDir/pubspec.yaml');
     final originalContent = pubspecFile.readAsStringSync();
@@ -104,7 +102,9 @@ void main(List<String> args) async {
     // but skip the delay after the last package or in dry-run mode.
     final isLast = i == _packages.length - 1;
     if (!dryRun && !isLast && failed.isEmpty) {
-      _log('  Waiting ${_propagationDelay.inSeconds}s for pub.dev propagation...');
+      _log(
+        '  Waiting ${_propagationDelay.inSeconds}s for pub.dev propagation...',
+      );
       await Future<void>.delayed(_propagationDelay);
     }
   }
@@ -123,7 +123,10 @@ void main(List<String> args) async {
 /// Reads the `version:` field from a package's pubspec.yaml.
 String _readVersion(String pkgDir) {
   final content = File('$pkgDir/pubspec.yaml').readAsStringSync();
-  final match = RegExp(r'^version:\s+(\S+)', multiLine: true).firstMatch(content);
+  final match = RegExp(
+    r'^version:\s+(\S+)',
+    multiLine: true,
+  ).firstMatch(content);
   if (match == null) _die('Could not read version from $pkgDir/pubspec.yaml');
   return match.group(1)!;
 }
