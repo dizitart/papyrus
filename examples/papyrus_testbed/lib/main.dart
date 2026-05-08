@@ -502,7 +502,8 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
     var width = baseViewport.width;
     var height = baseViewport.height;
 
-    if (viewportType == TestbedViewport.desktop && width > constraints.maxWidth) {
+    if (viewportType == TestbedViewport.desktop &&
+        width > constraints.maxWidth) {
       final scale = constraints.maxWidth / width;
       width = constraints.maxWidth;
       height *= scale;
