@@ -639,7 +639,9 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
   }
 
   double _previewPanelHeight(double? contentHeight) {
-    if (contentHeight == null || !contentHeight.isFinite || contentHeight <= 0) {
+    if (contentHeight == null ||
+        !contentHeight.isFinite ||
+        contentHeight <= 0) {
       return 0;
     }
     // Approximate header/padding chrome around the webview inside preview card.
