@@ -92,6 +92,29 @@ void main() {
     expect(linux, contains('getCapabilities'));
   });
 
+  test('linux examples install debug bundles into the build directory', () {
+    for (final path in [
+      'examples/papyrus_example/linux/CMakeLists.txt',
+      'examples/papyrus_testbed/linux/CMakeLists.txt',
+    ]) {
+      final cmake = File(path).readAsStringSync();
+
+      expect(cmake, contains('set(BUILD_BUNDLE_DIR "\${PROJECT_BINARY_DIR}/bundle")'));
+      expect(
+        cmake,
+        contains(
+          'CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT OR CMAKE_INSTALL_PREFIX STREQUAL "/usr/local"',
+        ),
+        reason: path,
+      );
+      expect(
+        cmake,
+        contains('set(CMAKE_INSTALL_PREFIX "\${BUILD_BUNDLE_DIR}" CACHE PATH "..." FORCE)'),
+        reason: path,
+      );
+    }
+  });
+
   test('integration smoke tests cover native load and capability contracts', () {
     final smoke = File(
       'examples/papyrus_example/integration_test/papyrus_native_smoke_test.dart',

@@ -17,6 +17,10 @@ Papyrus probes for `webkit2gtk-4.1` at build and link time, falling back to
 `webkit2gtk-4.0` if 4.1 is not present. GTK 3 (`gtk+-3.0`) is required by
 both paths and is present by default on major desktop distributions.
 
+In addition to WebKitGTK, Linux desktop builds need a working native toolchain
+(`cmake`, a C++ compiler, and a build backend such as `ninja`). Flutter Linux
+defaults to Ninja when available.
+
 | Distribution | webkit2gtk 4.1 | webkit2gtk 4.0 (fallback) |
 |---|---|---|
 | Ubuntu 22.04 LTS (Jammy) / Debian 12 | `libwebkit2gtk-4.1-0` | `libwebkit2gtk-4.0-0` |
@@ -34,7 +38,7 @@ sudo apt-get install libwebkit2gtk-4.1-0
 Install on Fedora 39+:
 
 ```sh
-sudo dnf install webkit2gtk4.1
+sudo dnf install cmake ninja-build gcc-c++ pkgconf-pkg-config gtk3-devel webkit2gtk4.1-devel
 ```
 
 Install on Arch Linux:
@@ -57,4 +61,15 @@ sudo pacman -S webkit2gtk-4.1
 WebKitGTK must be installed or available through the container runtime before
 the app starts. If it is absent, Flutter will fail to load the plugin DSO at
 startup before Papyrus can surface a `webViewUnavailable` error.
+
+### Troubleshooting Fedora/KDE build setup
+
+- `CMake was unable to find a build program corresponding to "Ninja"`:
+  install `ninja-build`.
+- `CMAKE_CXX_COMPILER not set, after EnableLanguage`:
+  install `gcc-c++` (or configure `clang++` as `CXX`).
+- `Could NOT find PkgConfig` / GTK pkg errors:
+  install `pkgconf-pkg-config` and `gtk3-devel`.
+- WebKitGTK pkg errors (`webkit2gtk-4.1` / `webkit2gtk-4.0`):
+  install `webkit2gtk4.1-devel` (or distro-equivalent fallback dev package).
 
