@@ -1,5 +1,24 @@
+# Dart / Flutter generated artifacts
 .dart_tool/
 build/
-pubspec.lock
+**/build/
 
-examples/another_example
+# Package manager locks (library monorepo)
+pubspec.lock
+**/pubspec.lock
+
+# Flutter / tooling outputs
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.metadata
+coverage/
+**/coverage/
+
+# IDE/editor
+.idea/
+.vscode/
+*.iml
+
+# OS files
+.DS_Store

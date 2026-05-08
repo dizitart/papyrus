@@ -1,30 +1,43 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:papyrus/papyrus.dart';
 
 import 'package:papyrus_testbed/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
-
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  setUp(() {
+    PapyrusPlatform.instance = _TestPapyrusPlatform();
   });
+
+  testWidgets('Papyrus testbed app renders main tabs', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const PapyrusTestbedApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Papyrus Testbed'), findsOneWidget);
+    expect(find.text('Raw HTML + CSS'), findsOneWidget);
+    expect(find.text('Raw MIME Email'), findsOneWidget);
+  });
+}
+
+class _TestPapyrusPlatform extends PapyrusPlatform {
+  @override
+  Future<void> load(PapyrusLoadRequest request) async {
+    request.validate();
+  }
+
+  @override
+  Future<PapyrusPlatformCapabilities> getCapabilities() async {
+    return const PapyrusPlatformCapabilities(
+      supportsResourceInterception: false,
+      supportsVirtualSchemes: false,
+      supportsEphemeralStorage: false,
+      supportsPrint: false,
+      supportsSnapshot: false,
+      supportsAutoHeight: true,
+      supportsDarkMode: false,
+      supportsDownloadInterception: false,
+      supportsPermissionInterception: false,
+    );
+  }
 }
