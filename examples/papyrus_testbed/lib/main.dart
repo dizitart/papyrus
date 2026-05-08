@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:papyrus/papyrus.dart';
 
@@ -79,6 +81,8 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
   String? _rawHtmlError;
   String? _mimeError;
   String _mimeSummary = '';
+  double? _rawHtmlContentHeight;
+  double? _mimeContentHeight;
 
   @override
   void initState() {
@@ -107,6 +111,9 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
     }
 
     try {
+      setState(() {
+        _rawHtmlContentHeight = null;
+      });
       await _rawHtmlPreviewController.load(
         PapyrusHtmlRequest(
           html: raw,
@@ -116,6 +123,7 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
           ),
         ),
       );
+      await _refreshContentHeight(_rawHtmlPreviewController);
       if (!mounted) {
         return;
       }
@@ -143,6 +151,9 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
 
     try {
       final extracted = MimeHtmlExtractor.extract(raw);
+      setState(() {
+        _mimeContentHeight = null;
+      });
       await _mimePreviewController.load(
         PapyrusHtmlRequest(
           html: extracted.html,
@@ -152,6 +163,7 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
           ),
         ),
       );
+      await _refreshContentHeight(_mimePreviewController);
       if (!mounted) {
         return;
       }
@@ -178,7 +190,11 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final viewport = _activeViewport.size;
+    final canSwitchViewport = _isDesktopPlatform;
+    final platformViewport = MediaQuery.sizeOf(context);
+    final viewport = canSwitchViewport
+        ? _activeViewport.size
+        : platformViewport;
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -219,10 +235,14 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
                   );
 
                   final label = Text(
-                    'Viewport: ${_activeViewport.label} '
+                    'Viewport: ${canSwitchViewport ? _activeViewport.label : 'Platform'} '
                     '(${viewport.width.toInt()} x ${viewport.height.toInt()})',
                     style: Theme.of(context).textTheme.titleMedium,
                   );
+
+                  if (!canSwitchViewport) {
+                    return label;
+                  }
 
                   if (constraints.maxWidth < 920) {
                     return Column(
@@ -257,6 +277,10 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
                     preview: _buildPapyrusPreview(
                       controller: _rawHtmlPreviewController,
                       initialHtml: _defaultHtml,
+                      simulateViewport: canSwitchViewport,
+                    ),
+                    previewPreferredHeight: _previewPanelHeight(
+                      _rawHtmlContentHeight,
                     ),
                   ),
                   _buildSplitPane(
@@ -265,6 +289,10 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
                       controller: _mimePreviewController,
                       initialHtml: _initialMimeHtml,
                       summary: _mimeSummary,
+                      simulateViewport: canSwitchViewport,
+                    ),
+                    previewPreferredHeight: _previewPanelHeight(
+                      _mimeContentHeight,
                     ),
                   ),
                 ],
@@ -276,17 +304,26 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
     );
   }
 
-  Widget _buildSplitPane({required Widget editor, required Widget preview}) {
+  Widget _buildSplitPane({
+    required Widget editor,
+    required Widget preview,
+    required double previewPreferredHeight,
+  }) {
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth < 1100) {
+          final previewHeight = math.max(
+            constraints.maxHeight * 0.62,
+            previewPreferredHeight,
+          );
+          final editorHeight = constraints.maxHeight * 0.52;
           return Padding(
             padding: const EdgeInsets.all(12),
-            child: Column(
+            child: ListView(
               children: [
-                Expanded(flex: 5, child: editor),
+                SizedBox(height: editorHeight, child: editor),
                 const SizedBox(height: 12),
-                Expanded(flex: 6, child: preview),
+                SizedBox(height: previewHeight, child: preview),
               ],
             ),
           );
@@ -333,14 +370,15 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
               ),
             ),
             const SizedBox(height: 10),
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 FilledButton.icon(
                   onPressed: _renderRawHtml,
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Render in Papyrus'),
                 ),
-                const SizedBox(width: 8),
                 OutlinedButton(
                   onPressed: () {
                     _htmlInputController.text = _defaultHtml;
@@ -390,14 +428,15 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
               ),
             ),
             const SizedBox(height: 10),
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 FilledButton.icon(
                   onPressed: _renderMime,
                   icon: const Icon(Icons.mark_email_read_outlined),
                   label: const Text('Extract + Render'),
                 ),
-                const SizedBox(width: 8),
                 OutlinedButton(
                   onPressed: () {
                     _mimeInputController.text = _defaultMime;
@@ -423,9 +462,12 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
   Widget _buildPapyrusPreview({
     required PapyrusController controller,
     required String initialHtml,
+    required bool simulateViewport,
     String? summary,
   }) {
-    final viewport = _activeViewport.size;
+    final viewport = simulateViewport
+        ? _activeViewport.size
+        : MediaQuery.sizeOf(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -438,7 +480,7 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
             ),
             const SizedBox(height: 4),
             Text(
-              '${_activeViewport.label}: '
+              '${simulateViewport ? _activeViewport.label : 'Platform'}: '
               '${viewport.width.toInt()} x ${viewport.height.toInt()}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
@@ -458,29 +500,84 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
                     final resolvedViewport = _resolveViewportSize(
                       constraints: constraints,
                       baseViewport: viewport,
-                      viewportType: _activeViewport,
                     );
-                    return Center(
-                      child: Container(
-                        width: resolvedViewport.width,
-                        height: resolvedViewport.height,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          border: Border.all(color: const Color(0xFFCBD5E1)),
-                          borderRadius: BorderRadius.circular(10),
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Color(0x33000000),
-                              blurRadius: 8,
-                              offset: Offset(0, 4),
+                    final contentHeight = _resolvedContentHeight(
+                      controller: controller,
+                      fallbackHeight: resolvedViewport.height,
+                    );
+                    if (!simulateViewport) {
+                      // On mobile/tablet, use full available width
+                      final containerWidth = (constraints.maxWidth - 24.0)
+                          .clamp(1.0, double.infinity)
+                          .toDouble();
+                      return Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: SingleChildScrollView(
+                          child: Container(
+                            width: containerWidth,
+                            height: contentHeight,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              border: Border.all(
+                                color: const Color(0xFFCBD5E1),
+                              ),
+                              borderRadius: BorderRadius.circular(10),
                             ),
-                          ],
+                            clipBehavior: Clip.antiAlias,
+                            child: PapyrusView(
+                              controller: controller,
+                              configuration: _configuration,
+                              initialRequest: PapyrusHtmlRequest(
+                                html: initialHtml,
+                              ),
+                              onPageFinished: (_) {
+                                _queueContentHeightRefresh(controller);
+                              },
+                              onContentSizeChanged: (size) {
+                                _storeContentHeight(controller, size);
+                              },
+                            ),
+                          ),
                         ),
-                        clipBehavior: Clip.antiAlias,
-                        child: PapyrusView(
-                          controller: controller,
-                          configuration: _configuration,
-                          initialRequest: PapyrusHtmlRequest(html: initialHtml),
+                      );
+                    }
+                    return Scrollbar(
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(12),
+                        child: Center(
+                          child: Container(
+                            width: resolvedViewport.width,
+                            height: contentHeight,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              border: Border.all(
+                                color: const Color(0xFFCBD5E1),
+                              ),
+                              borderRadius: BorderRadius.circular(10),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x33000000),
+                                  blurRadius: 8,
+                                  offset: Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: PapyrusView(
+                              controller: controller,
+                              configuration: _configuration,
+                              initialRequest: PapyrusHtmlRequest(
+                                html: initialHtml,
+                              ),
+                              onPageFinished: (_) {
+                                _queueContentHeightRefresh(controller);
+                              },
+                              onContentSizeChanged: (size) {
+                                _storeContentHeight(controller, size);
+                              },
+                            ),
+                          ),
                         ),
                       ),
                     );
@@ -497,25 +594,129 @@ class _PapyrusTestbedHomePageState extends State<PapyrusTestbedHomePage> {
   Size _resolveViewportSize({
     required BoxConstraints constraints,
     required Size baseViewport,
-    required TestbedViewport viewportType,
   }) {
+    final horizontalPadding = 24.0;
+    final verticalPadding = 24.0;
+    final availableWidth = (constraints.maxWidth - horizontalPadding).clamp(
+      1.0,
+      double.infinity,
+    );
+    final availableHeight = (constraints.maxHeight - verticalPadding).clamp(
+      1.0,
+      double.infinity,
+    );
+
     var width = baseViewport.width;
     var height = baseViewport.height;
 
-    if (viewportType == TestbedViewport.desktop &&
-        width > constraints.maxWidth) {
-      final scale = constraints.maxWidth / width;
-      width = constraints.maxWidth;
+    if (width > availableWidth) {
+      final scale = availableWidth / width;
+      width = availableWidth;
       height *= scale;
     }
 
-    if (height > constraints.maxHeight) {
-      final scale = constraints.maxHeight / height;
-      height = constraints.maxHeight;
+    if (height > availableHeight) {
+      final scale = availableHeight / height;
+      height = availableHeight;
       width *= scale;
     }
 
     return Size(width, height);
+  }
+
+  double _resolvedContentHeight({
+    required PapyrusController controller,
+    required double fallbackHeight,
+  }) {
+    final measured = identical(controller, _rawHtmlPreviewController)
+        ? _rawHtmlContentHeight
+        : _mimeContentHeight;
+    final safeFallback = fallbackHeight.clamp(180.0, 1400.0).toDouble();
+    if (measured == null || !measured.isFinite || measured <= 0) {
+      return safeFallback;
+    }
+    return measured.clamp(180.0, 6000.0).toDouble();
+  }
+
+  double _previewPanelHeight(double? contentHeight) {
+    if (contentHeight == null || !contentHeight.isFinite || contentHeight <= 0) {
+      return 0;
+    }
+    // Approximate header/padding chrome around the webview inside preview card.
+    return (contentHeight + 180).clamp(360.0, 7000.0).toDouble();
+  }
+
+  void _queueContentHeightRefresh(PapyrusController controller) {
+    Future<void>(() async {
+      await _refreshContentHeight(controller);
+    });
+  }
+
+  Future<void> _refreshContentHeight(PapyrusController controller) async {
+    const delays = <Duration>[
+      Duration.zero,
+      Duration(milliseconds: 120),
+      Duration(milliseconds: 300),
+      Duration(milliseconds: 700),
+    ];
+
+    for (final delay in delays) {
+      if (!mounted) {
+        return;
+      }
+      if (delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
+      try {
+        final size = await controller.getContentSize();
+        _storeContentHeight(controller, size);
+      } on Object {
+        // Some backends may not support explicit content-size queries.
+        return;
+      }
+    }
+  }
+
+  void _storeContentHeight(
+    PapyrusController controller,
+    PapyrusContentSize size,
+  ) {
+    final next = size.height;
+    if (!next.isFinite || next <= 0) {
+      return;
+    }
+    final normalized = next.ceilToDouble();
+    final previous = identical(controller, _rawHtmlPreviewController)
+        ? _rawHtmlContentHeight
+        : _mimeContentHeight;
+    if (previous != null && (previous - normalized).abs() < 1.0) {
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (identical(controller, _rawHtmlPreviewController)) {
+        _rawHtmlContentHeight = normalized;
+      } else {
+        _mimeContentHeight = normalized;
+      }
+    });
+  }
+
+  bool get _isDesktopPlatform {
+    if (kIsWeb) {
+      return true;
+    }
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.macOS => true,
+      TargetPlatform.windows => true,
+      TargetPlatform.linux => true,
+      TargetPlatform.android => false,
+      TargetPlatform.iOS => false,
+      TargetPlatform.fuchsia => false,
+    };
   }
 }
 
