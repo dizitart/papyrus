@@ -6,6 +6,14 @@ Papyrus is designed for controlled HTML rendering use-cases — document viewers
 
 ---
 
+## Release & Publishing
+
+- Release runbook: [docs/release_workflow.md](docs/release_workflow.md)
+- CI workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
+- Publish workflow: [.github/workflows/publish.yml](.github/workflows/publish.yml)
+
+---
+
 ## Packages
 
 | Package | Description |

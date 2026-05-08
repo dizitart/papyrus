@@ -2,40 +2,129 @@ name: CI
 
 on:
   push:
+    branches: ["**"]
+    tags-ignore: ["v*"] # publish.yml handles version tags
   pull_request:
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-      - run: cd packages/papyrus_platform_interface && flutter test
-      - run: cd packages/papyrus_platform_interface && flutter analyze
-      - run: cd packages/papyrus && flutter test
-      - run: cd packages/papyrus && flutter analyze
-      - run: cd packages/papyrus_android && flutter analyze
-      - run: cd packages/papyrus_ios && flutter analyze
-      - run: cd packages/papyrus_macos && flutter analyze
-      - run: cd packages/papyrus_windows && flutter analyze
-      - run: cd packages/papyrus_linux && flutter analyze
-      - run: flutter test test/acceptance_test.dart
+# Cancel in-flight runs for the same ref so a new push doesn't queue behind
+# a stale one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-  windows-native-tests:
-    runs-on: windows-latest
+jobs:
+  # ── Dart / Flutter static checks and unit tests ──────────────────────────
+  analyze-and-test:
+    name: Analyze & test (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - papyrus_platform_interface
+          - papyrus_android
+          - papyrus_ios
+          - papyrus_macos
+          - papyrus_windows
+          - papyrus_linux
+          - papyrus
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-      - uses: ilammy/msvc-dev-cmd@v1
-      - shell: pwsh
+          cache: true
+
+      - name: Install dependencies
+        working-directory: packages/${{ matrix.package }}
+        run: flutter pub get
+
+      - name: Verify formatting
+        working-directory: packages/${{ matrix.package }}
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Analyze
+        working-directory: packages/${{ matrix.package }}
+        run: flutter analyze --fatal-infos
+
+      - name: Test
+        working-directory: packages/${{ matrix.package }}
         run: |
-          Set-Location examples/papyrus_example
+          if [ -d "test" ] && ls test/*.dart 2>/dev/null | grep -q .; then
+            flutter test
+          else
+            echo "No tests to run for ${{ matrix.package }}"
+          fi
+        shell: bash
+
+  # ── Workspace-level acceptance tests ─────────────────────────────────────
+  acceptance-tests:
+    name: Acceptance tests
+    runs-on: ubuntu-latest
+    needs: analyze-and-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install workspace dependencies
+        run: flutter pub get
+
+      - name: Run acceptance tests
+        run: flutter test test/acceptance_test.dart
+
+  # ── Publish dry-run (validates every package is pub.dev-ready) ───────────
+  publish-dry-run:
+    name: Publish dry-run
+    runs-on: ubuntu-latest
+    needs: analyze-and-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install workspace dependencies
+        run: flutter pub get
+
+      - name: Dry-run publish (validate all packages)
+        run: dart run tool/publish.dart --dry-run
+
+  # ── Windows native C++ tests ──────────────────────────────────────────────
+  windows-native-tests:
+    name: Windows native tests
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build and test (Windows native)
+        shell: pwsh
+        working-directory: examples/papyrus_example
+        run: |
           flutter pub get
           flutter build windows --debug
-          cmake -S windows -B build/windows/x64 "-Dinclude_papyrus_windows_tests=ON" "-DCMAKE_POLICY_VERSION_MINIMUM=3.10"
-          cmake --build build/windows/x64 --config Debug --target papyrus_windows_test -- /nologo /verbosity:minimal /clp:ErrorsOnly
-          ctest --test-dir build/windows/x64/plugins/papyrus_windows -C Debug --output-on-failure
+          cmake -S windows -B build/windows/x64 `
+            "-Dinclude_papyrus_windows_tests=ON" `
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.10"
+          cmake --build build/windows/x64 --config Debug `
+            --target papyrus_windows_test `
+            -- /nologo /verbosity:minimal /clp:ErrorsOnly
+          ctest --test-dir build/windows/x64/plugins/papyrus_windows `
+            -C Debug --output-on-failure

@@ -1,7 +1,9 @@
 name: papyrus_ios
 description: iOS WKWebView implementation for Papyrus.
 version: 0.1.0
-publish_to: none
+homepage: https://github.com/dizitart/papyrus
+repository: https://github.com/dizitart/papyrus/tree/main/packages/papyrus_ios
+issue_tracker: https://github.com/dizitart/papyrus/issues
 
 environment:
   sdk: ^3.11.0

@@ -1,7 +1,9 @@
 name: papyrus_windows
 description: Windows WebView2 implementation for Papyrus.
 version: 0.1.0
-publish_to: none
+homepage: https://github.com/dizitart/papyrus
+repository: https://github.com/dizitart/papyrus/tree/main/packages/papyrus_windows
+issue_tracker: https://github.com/dizitart/papyrus/issues
 
 environment:
   sdk: ^3.11.0

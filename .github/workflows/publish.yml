@@ -1,0 +1,71 @@
+name: Publish to pub.dev
+
+# Triggered by version tags of the form v<semver>, e.g. v0.1.0, v1.2.3.
+# All packages in the monorepo are published at the same version in a
+# coordinated release.
+#
+# ── First-time setup (do once per package on pub.dev) ─────────────────────
+#
+# 1. Publish the package manually once (or use PUB_TOKEN) so the package
+#    exists on pub.dev and you can configure it:
+#
+#      dart run tool/publish.dart     # from repo root
+#
+# 2. For each package, go to:
+#      https://pub.dev/packages/<package>/admin
+#    and add an "Automated publishing" entry:
+#      • Repository:  dizitart/papyrus
+#      • Workflow:    publish.yml
+#      • Tag pattern: v{{version}}    (the default)
+#
+# 3. After that, every new v* tag on main will publish all packages via OIDC —
+#    no stored credentials required.
+#
+# ── Releasing ─────────────────────────────────────────────────────────────
+#
+#   1. Bump `version:` in all 7 package pubspec.yaml files.
+#   2. Add entries to all 7 CHANGELOG.md files.
+#   3. Commit: git commit -am "chore: release v<semver>"
+#   4. Tag:    git tag v<semver>
+#   5. Push:   git push origin main v<semver>
+#
+# The workflow below will run, publish all packages in dependency order, and
+# wait 60 s between packages for pub.dev index propagation.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+# No extra branches; tags only.
+
+permissions:
+  id-token: write # Required for pub.dev OIDC automated publishing
+
+jobs:
+  publish:
+    name: Publish packages
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install workspace dependencies
+        run: flutter pub get
+
+      # Validate that every package passes `pub publish --dry-run` before
+      # touching pub.dev.
+      - name: Dry-run validation
+        run: dart run tool/publish.dart --dry-run
+
+      # Publish all packages in dependency order.
+      # tool/publish.dart replaces path: deps with version constraints,
+      # calls `flutter/dart pub publish --force`, then restores pubspec.yaml.
+      - name: Publish all packages
+        run: dart run tool/publish.dart
