@@ -73,7 +73,21 @@ void main(List<String> args) async {
     _log('\n[${i + 1}/${_packages.length}] Publishing $pkgName ...');
 
     final pubspecFile = File('$pkgDir/pubspec.yaml');
+    final packageLicenseFile = File('$pkgDir/LICENSE');
     final originalContent = pubspecFile.readAsStringSync();
+    var addedTemporaryLicense = false;
+
+    // pub.dev validation requires each package directory to contain LICENSE.
+    // Mirror the repository root license into package roots when missing.
+    if (!packageLicenseFile.existsSync()) {
+      final rootLicenseFile = File('LICENSE');
+      if (!rootLicenseFile.existsSync()) {
+        _die('Repository root LICENSE file is missing.');
+      }
+      packageLicenseFile.writeAsStringSync(rootLicenseFile.readAsStringSync());
+      addedTemporaryLicense = true;
+      _log('  Added temporary LICENSE');
+    }
 
     // Replace path: dependencies with version constraints before publishing.
     final patchedContent = _replacePaths(originalContent, version);
@@ -95,6 +109,10 @@ void main(List<String> args) async {
       if (didPatch) {
         pubspecFile.writeAsStringSync(originalContent);
         _log('  Restored original pubspec.yaml');
+      }
+      if (addedTemporaryLicense && packageLicenseFile.existsSync()) {
+        packageLicenseFile.deleteSync();
+        _log('  Removed temporary LICENSE');
       }
     }
 
