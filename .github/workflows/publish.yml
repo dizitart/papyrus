@@ -114,6 +114,16 @@ jobs:
       - name: Install workspace dependencies
         run: flutter pub get
 
+      # Optional fallback for environments where trusted publishing is not yet
+      # fully configured on every package admin page.
+      - name: Configure pub credentials fallback
+        if: ${{ secrets.PUB_CREDENTIALS != '' }}
+        run: |
+          mkdir -p "$HOME/.pub-cache"
+          cat > "$HOME/.pub-cache/credentials.json" <<'EOF'
+          ${{ secrets.PUB_CREDENTIALS }}
+          EOF
+
       # Validate that every package passes `pub publish --dry-run` before
       # touching pub.dev.
       - name: Dry-run validation
