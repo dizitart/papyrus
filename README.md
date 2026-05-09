@@ -1,5 +1,10 @@
 # Papyrus
 
+[![pub package](https://img.shields.io/pub/v/papyrus.svg)](https://pub.dev/packages/papyrus)
+[![CI](https://github.com/dizitart/papyrus/actions/workflows/ci.yml/badge.svg)](https://github.com/dizitart/papyrus/actions/workflows/ci.yml)
+[![Publish to pub.dev](https://github.com/dizitart/papyrus/actions/workflows/publish.yml/badge.svg)](https://github.com/dizitart/papyrus/actions/workflows/publish.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 A policy-driven federated native WebView for Flutter. Papyrus embeds the platform system WebView on each supported target and exposes a uniform, conservative-by-default API surface for loading, navigation, resource, security, storage, and interaction control.
 
 Papyrus is designed for controlled HTML rendering use-cases — document viewers, email HTML renderers, sandboxed content panels — not as a general-purpose browser shell.
