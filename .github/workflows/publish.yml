@@ -103,7 +103,7 @@ jobs:
     needs: wait-for-ci
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Flutter (stable)
         uses: subosito/flutter-action@v2
