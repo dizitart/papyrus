@@ -12,10 +12,7 @@ class PapyrusExampleApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Papyrus Example',
-      home: const WebViewPage(),
-    );
+    return MaterialApp(title: 'Papyrus Example', home: const WebViewPage());
   }
 }
 
