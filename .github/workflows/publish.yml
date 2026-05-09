@@ -1,16 +1,11 @@
 name: Publish to pub.dev
 
-# Runs after the CI workflow completes successfully on a version tag push.
-# This guarantees all checks (analyze, test, acceptance) are green before
-# any package is published to pub.dev.
+# Runs on version tag pushes and waits for the CI workflow for the same commit
+# to complete successfully before publishing.
 #
-# ── Dependency chain ──────────────────────────────────────────────────────
-#
-#   git push origin main v0.1.x
-#       │
-#       ├─► CI workflow runs (analyze + test + acceptance) on the tag commit
-#       │
-#       └─► (only if CI passes) this workflow fires via workflow_run
+# NOTE: pub.dev trusted publishing relies on GitHub OIDC context from the
+# tag-triggered run. Using `workflow_run` can lose the tag context and cause
+# `dart pub publish` to fall back to interactive OAuth prompts.
 #
 # ── First-time setup (do once per package on pub.dev) ─────────────────────
 #
@@ -25,8 +20,8 @@ name: Publish to pub.dev
 #      • Workflow:    publish.yml
 #      • Tag pattern: v{{version}}    (the default)
 #
-# 3. After that, every new v* tag triggers CI → Publish in sequence with no
-#    stored credentials required (OIDC).
+# 3. After that, every new v* tag triggers CI and this publish workflow waits
+#    for CI success, then publishes via OIDC with no stored credentials.
 #
 # ── Releasing ─────────────────────────────────────────────────────────────
 #
@@ -40,30 +35,75 @@ name: Publish to pub.dev
 # wait 60 s between packages for pub.dev index propagation.
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    # Matches the head branch / tag name set by the CI trigger.
-    # For tag pushes the head_branch is the tag name (e.g. "v0.1.1").
-    branches:
+  push:
+    tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
 permissions:
+  actions: read
   id-token: write # Required for pub.dev OIDC automated publishing
 
 jobs:
+  wait-for-ci:
+    name: Wait for CI on this tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait until CI run for this SHA finishes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const sha = context.sha;
+
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+            core.info(`Waiting for CI workflow on sha ${sha}...`);
+
+            for (let i = 0; i < 60; i++) {
+              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner,
+                repo,
+                event: 'push',
+                head_sha: sha,
+                per_page: 20,
+              });
+
+              const run = data.workflow_runs.find(
+                (r) => r.name === 'CI' && r.head_sha === sha,
+              );
+
+              if (!run) {
+                core.info('CI run not visible yet; retrying in 15s...');
+                await sleep(15000);
+                continue;
+              }
+
+              core.info(`CI status=${run.status}, conclusion=${run.conclusion}`);
+
+              if (run.status !== 'completed') {
+                await sleep(15000);
+                continue;
+              }
+
+              if (run.conclusion !== 'success') {
+                core.setFailed(`CI concluded with '${run.conclusion}'. Publish aborted.`);
+                return;
+              }
+
+              core.info('CI passed; continuing to publish.');
+              return;
+            }
+
+            core.setFailed('Timed out waiting for CI completion.');
+
   publish:
     name: Publish packages
     runs-on: ubuntu-latest
-    # Only proceed when CI passed; skip silently on failure/cancellation.
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    needs: wait-for-ci
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          # Check out the exact commit that CI validated, not whatever HEAD
-          # happens to be on main at the time this workflow starts.
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Flutter (stable)
         uses: subosito/flutter-action@v2
