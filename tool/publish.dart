@@ -246,10 +246,9 @@ Future<bool> _publish(String pkgDir, {required bool dryRun}) async {
 
   if (exitCode != 0) {
     // Treat already-published versions as success so re-runs are safe.
-    final output = outputBuffer.toString();
+    final output = outputBuffer.toString().toLowerCase();
     if (output.contains('already published') ||
-        output.contains('Version already exists') ||
-        output.contains('version already exists')) {
+        output.contains('already exists')) {
       _log('  Already published — skipping.');
       return true;
     }
