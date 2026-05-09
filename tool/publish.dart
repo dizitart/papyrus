@@ -80,48 +80,34 @@ void main(List<String> args) async {
     final pkgName = pkgDir.split('/').last;
     _log('\n[${i + 1}/${_packages.length}] Publishing $pkgName ...');
 
-    final pubspecFile = File('$pkgDir/pubspec.yaml');
-    final packageLicenseFile = File('$pkgDir/LICENSE');
-    final originalContent = pubspecFile.readAsStringSync();
-    var addedTemporaryLicense = false;
-
-    // pub.dev validation requires each package directory to contain LICENSE.
-    // Mirror the repository root license into package roots when missing.
-    if (!packageLicenseFile.existsSync()) {
-      final rootLicenseFile = File('LICENSE');
-      if (!rootLicenseFile.existsSync()) {
-        _die('Repository root LICENSE file is missing.');
-      }
-      packageLicenseFile.writeAsStringSync(rootLicenseFile.readAsStringSync());
-      addedTemporaryLicense = true;
-      _log('  Added temporary LICENSE');
+    if (!dryRun && await _isVersionPublished(pkgName, version)) {
+      _log('  Version $version already exists on pub.dev — skipping.');
+      continue;
     }
 
-    // Replace path: dependencies with version constraints before publishing.
+    final pubspecFile = File('$pkgDir/pubspec.yaml');
+    final originalContent = pubspecFile.readAsStringSync();
     final patchedContent = _replacePaths(originalContent, version);
     final didPatch = patchedContent != originalContent;
 
+    final publishDir = await _preparePublishDirectory(
+      pkgDir,
+      patchedPubspec: patchedContent,
+      didPatchPubspec: didPatch,
+    );
+
     if (didPatch) {
-      _log('  Patching path: dependencies → ^$version');
-      pubspecFile.writeAsStringSync(patchedContent);
+      _log('  Patching path: dependencies → ^$version in publish copy');
     }
 
     try {
-      final ok = await _publish(pkgDir, dryRun: dryRun);
+      final ok = await _publish(publishDir.path, dryRun: dryRun);
       if (!ok) {
         failed.add(pkgName);
         _log('  ERROR: publish failed for $pkgName');
       }
     } finally {
-      // Always restore the original pubspec.yaml.
-      if (didPatch) {
-        pubspecFile.writeAsStringSync(originalContent);
-        _log('  Restored original pubspec.yaml');
-      }
-      if (addedTemporaryLicense && packageLicenseFile.existsSync()) {
-        packageLicenseFile.deleteSync();
-        _log('  Removed temporary LICENSE');
-      }
+      await publishDir.parent.delete(recursive: true);
     }
 
     // Wait for pub.dev to index the package before publishing dependents,
@@ -172,6 +158,104 @@ String _replacePaths(String content, String version) {
   return content.replaceAllMapped(_pathDepPattern, (m) {
     return '  ${m.group(1)!}: ^$version';
   });
+}
+
+/// Returns true when [packageName] already has [version] on pub.dev.
+///
+/// This makes rerunning a release tag idempotent and avoids invoking
+/// `pub publish` for versions that can no longer be uploaded.
+Future<bool> _isVersionPublished(String packageName, String version) async {
+  final client = HttpClient();
+  try {
+    final uri = Uri.https('pub.dev', '/api/packages/$packageName');
+    final request = await client.getUrl(uri);
+    final response = await request.close();
+
+    if (response.statusCode == HttpStatus.notFound) {
+      return false;
+    }
+
+    if (response.statusCode != HttpStatus.ok) {
+      _log(
+        '  Could not check existing versions on pub.dev '
+        '(HTTP ${response.statusCode}); continuing.',
+      );
+      return false;
+    }
+
+    final body = await utf8.decoder.bind(response).join();
+    final packageInfo = jsonDecode(body) as Map<String, Object?>;
+    final versions = packageInfo['versions'];
+    if (versions is! List) {
+      return false;
+    }
+
+    return versions.any((entry) {
+      if (entry is! Map) return false;
+      return entry['version'] == version;
+    });
+  } on Object catch (error) {
+    _log('  Could not check existing versions on pub.dev: $error');
+    return false;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+/// Copies [pkgDir] to a temporary directory and applies publish-only changes.
+///
+/// Publishing from a copy keeps the checked-out release tag clean while still
+/// replacing intra-repo path dependencies with hosted version constraints.
+Future<Directory> _preparePublishDirectory(
+  String pkgDir, {
+  required String patchedPubspec,
+  required bool didPatchPubspec,
+}) async {
+  final tempRoot = await Directory.systemTemp.createTemp('papyrus_publish_');
+  final publishDir = Directory('${tempRoot.path}/${pkgDir.split('/').last}');
+  await _copyTrackedPackageFiles(pkgDir, publishDir);
+
+  if (didPatchPubspec) {
+    await File('${publishDir.path}/pubspec.yaml').writeAsString(patchedPubspec);
+  }
+
+  final packageLicenseFile = File('${publishDir.path}/LICENSE');
+  if (!packageLicenseFile.existsSync()) {
+    final rootLicenseFile = File('LICENSE');
+    if (!rootLicenseFile.existsSync()) {
+      _die('Repository root LICENSE file is missing.');
+    }
+    await packageLicenseFile.writeAsString(
+      await rootLicenseFile.readAsString(),
+    );
+    _log('  Added LICENSE to publish copy');
+  }
+
+  return publishDir;
+}
+
+Future<void> _copyTrackedPackageFiles(
+  String pkgDir,
+  Directory destination,
+) async {
+  await destination.create(recursive: true);
+
+  final result = await Process.run('git', ['ls-files', '--', pkgDir]);
+  if (result.exitCode != 0) {
+    _die('Could not list tracked files for $pkgDir: ${result.stderr}');
+  }
+
+  final packagePrefix = '$pkgDir/';
+  final trackedFiles = LineSplitter.split(
+    result.stdout as String,
+  ).where((path) => path.startsWith(packagePrefix));
+
+  for (final sourcePath in trackedFiles) {
+    final relativePath = sourcePath.substring(packagePrefix.length);
+    final target = File('${destination.path}/$relativePath');
+    await target.parent.create(recursive: true);
+    await File(sourcePath).copy(target.path);
+  }
 }
 
 /// Runs `dart pub publish` (or `flutter pub publish` for Flutter packages)
