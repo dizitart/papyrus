@@ -1,3 +1,11 @@
+## 0.1.1
+
+* Added package-local LICENSE and runnable package example.
+
+* Expanded public API documentation for Papyrus controller and widget APIs.
+
+* Documentation and metadata refinements for pub score conformance.
+
 ## 0.1.0
 
 * Initial release.

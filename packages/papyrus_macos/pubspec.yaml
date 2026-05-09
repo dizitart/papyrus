@@ -1,6 +1,6 @@
 name: papyrus_macos
-description: macOS WKWebView implementation for Papyrus.
-version: 0.1.0
+description: macOS WKWebView backend for Papyrus, a secure policy-driven federated WebView plugin for Flutter apps.
+version: 0.1.1
 homepage: https://github.com/dizitart/papyrus
 repository: https://github.com/dizitart/papyrus/tree/main/packages/papyrus_macos
 issue_tracker: https://github.com/dizitart/papyrus/issues

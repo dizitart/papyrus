@@ -1,9 +1,25 @@
+/// iOS platform implementation for the Papyrus WebView plugin.
+///
+/// This library provides [PapyrusIos], the [PapyrusPlatform] implementation
+/// backed by iOS WKWebView via a [MethodChannel].
+///
+/// This package is registered automatically by the Flutter plugin mechanism;
+/// use [PapyrusController] and [PapyrusView] from the `papyrus` package
+/// in your application code.
+library;
+
 import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:papyrus_platform_interface/papyrus_platform_interface.dart';
 
+/// The iOS implementation of [PapyrusPlatform] backed by WKWebView.
+///
+/// Communicates with native iOS code over a [MethodChannel]. The platform
+/// is registered automatically; you should not instantiate this class directly.
+/// Instead, use [PapyrusController] from the `papyrus` package.
 class PapyrusIos extends PapyrusPlatform {
+  /// Creates a [PapyrusIos] instance, optionally with a custom [channel].
   PapyrusIos({MethodChannel? channel})
     : _channel = channel ?? const MethodChannel('dev.papyrus.papyrus_ios');
 
@@ -14,10 +30,12 @@ class PapyrusIos extends PapyrusPlatform {
   PapyrusResourceResolver? _resourceResolver;
   bool _methodHandlerInstalled = false;
 
+  /// Registers this class as the platform implementation.
   static void registerWith() {
     PapyrusPlatform.instance = PapyrusIos();
   }
 
+  /// A stream of [PapyrusEvent] values emitted by the underlying webview.
   @override
   Stream<PapyrusEvent> get events {
     _ensureMethodHandlerInstalled();
@@ -54,6 +72,7 @@ class PapyrusIos extends PapyrusPlatform {
     );
   }
 
+  /// Creates and configures the native iOS webview instance.
   @override
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
@@ -64,6 +83,7 @@ class PapyrusIos extends PapyrusPlatform {
     return _channel.invokeMethod<void>('create', config);
   }
 
+  /// Loads the given [request] into the webview.
   @override
   Future<void> load(PapyrusLoadRequest request) {
     request.validate();

@@ -1,9 +1,26 @@
+/// Windows platform implementation for the Papyrus WebView plugin.
+///
+/// This library provides [PapyrusWindows], the [PapyrusPlatform] implementation
+/// backed by the Windows WebView2 control via a [MethodChannel].
+///
+/// This package is registered automatically by the Flutter plugin mechanism;
+/// use [PapyrusController] and [PapyrusView] from the `papyrus` package
+/// in your application code.
+library;
+
 import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:papyrus_platform_interface/papyrus_platform_interface.dart';
 
+/// The Windows implementation of [PapyrusPlatform] backed by WebView2.
+///
+/// Uses a desktop overlay surface. Communicates with native Windows code over
+/// a [MethodChannel]. The platform is registered automatically; you should not
+/// instantiate this class directly. Instead, use [PapyrusController] from the
+/// `papyrus` package.
 class PapyrusWindows extends PapyrusPlatform {
+  /// Creates a [PapyrusWindows] instance, optionally with a custom [channel].
   PapyrusWindows({MethodChannel? channel})
     : _channel = channel ?? const MethodChannel('dev.papyrus.papyrus_windows');
 
@@ -14,10 +31,12 @@ class PapyrusWindows extends PapyrusPlatform {
   PapyrusResourceResolver? _resourceResolver;
   bool _methodHandlerInstalled = false;
 
+  /// Registers this class as the platform implementation.
   static void registerWith() {
     PapyrusPlatform.instance = PapyrusWindows();
   }
 
+  /// A stream of [PapyrusEvent] values emitted by the underlying webview.
   @override
   Stream<PapyrusEvent> get events {
     _ensureMethodHandlerInstalled();
@@ -51,6 +70,7 @@ class PapyrusWindows extends PapyrusPlatform {
     );
   }
 
+  /// Creates and configures the native Windows webview instance.
   @override
   Future<void> create({
     PapyrusConfiguration configuration = const PapyrusConfiguration(),
@@ -80,6 +100,7 @@ class PapyrusWindows extends PapyrusPlatform {
     });
   }
 
+  /// Loads the given [request] into the webview.
   @override
   Future<void> load(PapyrusLoadRequest request) {
     request.validate();

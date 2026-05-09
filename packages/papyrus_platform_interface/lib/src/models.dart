@@ -1,73 +1,250 @@
 import 'dart:typed_data';
 
+/// A convenience alias for a JSON-compatible map with string keys.
 typedef JsonMap = Map<String, Object?>;
 
+/// The type of navigation that triggered a [PapyrusNavigationRequest].
 enum PapyrusNavigationType {
+  /// Navigation initiated by the user clicking a link.
   linkClicked,
+
+  /// Navigation initiated by a form submission.
   formSubmitted,
+
+  /// Navigation initiated by pressing the back or forward button.
   backForward,
+
+  /// Navigation initiated by reloading the current page.
   reload,
+
+  /// Navigation initiated programmatically (e.g. via JavaScript or [PapyrusController.load]).
   programmatic,
+
+  /// Navigation type that does not fit any of the above categories.
   other,
 }
 
-enum PapyrusNavigationDecision { allow, block, openExternally, download }
+/// The decision returned by a navigation resolver to determine what happens
+/// when the webview attempts to navigate to a new URL.
+enum PapyrusNavigationDecision {
+  /// Allow the navigation to proceed inside the webview.
+  allow,
 
+  /// Block the navigation entirely.
+  block,
+
+  /// Open the URL in an external browser or application.
+  openExternally,
+
+  /// Treat the URL as a file download.
+  download,
+}
+
+/// The type of a sub-resource requested by the webview.
 enum PapyrusResourceType {
+  /// A full HTML document resource.
   document,
+
+  /// A CSS stylesheet resource.
   stylesheet,
+
+  /// An image resource.
   image,
+
+  /// A web font resource.
   font,
+
+  /// A JavaScript script resource.
   script,
+
+  /// An XMLHttpRequest or Fetch API resource.
   xhr,
+
+  /// An audio or video media resource.
   media,
+
+  /// A resource loaded inside an iframe.
   iframe,
+
+  /// A resource type that does not fit any of the above categories.
   other,
 }
 
-enum PapyrusRemoteResourceMode { block, allowAll, allowByHost, askHostApp }
+/// Controls how the webview handles remote (non-virtual) sub-resource requests.
+enum PapyrusRemoteResourceMode {
+  /// Block all remote resource requests.
+  block,
 
-enum PapyrusJavaScriptMode { disabled, restricted, unrestricted }
+  /// Allow all remote resource requests unconditionally.
+  allowAll,
 
-enum PapyrusCookiePolicy { block, allow, allowByHost }
+  /// Allow only requests whose host is in [PapyrusResourcePolicy.allowedHosts].
+  allowByHost,
 
-enum PapyrusStorageMode { disabled, enabled }
+  /// Forward remote resource requests to the host app's resource resolver.
+  askHostApp,
+}
 
-enum PapyrusCacheMode { defaultMode, noCache, cacheOnly }
+/// Controls which JavaScript execution features are enabled in the webview.
+enum PapyrusJavaScriptMode {
+  /// JavaScript execution is disabled entirely.
+  disabled,
 
+  /// JavaScript may run but communication with the host app is limited
+  /// to channels explicitly registered via [PapyrusJavaScriptPolicy.allowedChannels].
+  restricted,
+
+  /// JavaScript execution is fully unrestricted.
+  unrestricted,
+}
+
+/// Controls cookie storage and transmission for the webview session.
+enum PapyrusCookiePolicy {
+  /// Block all cookies.
+  block,
+
+  /// Allow cookies for all origins.
+  allow,
+
+  /// Allow cookies only for hosts listed in [PapyrusStoragePolicy.cookies].
+  allowByHost,
+}
+
+/// Controls whether the webview can use persistent local storage (localStorage / IndexedDB).
+enum PapyrusStorageMode {
+  /// Local storage is disabled.
+  disabled,
+
+  /// Local storage is enabled.
+  enabled,
+}
+
+/// Controls HTTP caching behaviour for the webview.
+enum PapyrusCacheMode {
+  /// Use the platform's default caching behaviour (respects HTTP cache headers).
+  defaultMode,
+
+  /// Disable the HTTP cache; always fetch resources from the network.
+  noCache,
+
+  /// Load resources from the cache only; never make network requests.
+  cacheOnly,
+}
+
+/// A browser permission type that the web page may request from the user.
 enum PapyrusPermissionType {
+  /// Access to the device camera.
   camera,
+
+  /// Access to the device microphone.
   microphone,
+
+  /// Access to the device's geographic location.
   geolocation,
+
+  /// Permission to display push notifications.
   notifications,
+
+  /// Permission to read from the system clipboard.
   clipboardRead,
+
+  /// Permission to write to the system clipboard.
   clipboardWrite,
+
+  /// Permission to play DRM-protected media.
   protectedMedia,
+
+  /// Permission to open a native file-chooser dialog.
   fileChooser,
 }
 
-enum PapyrusPermissionDecision { grant, deny, promptHostApp }
+/// The decision made in response to a [PapyrusPermissionRequest].
+enum PapyrusPermissionDecision {
+  /// Grant the requested permissions.
+  grant,
 
-enum PapyrusDownloadDecision { block, allowSystemDownload, handToHostApp }
+  /// Deny the requested permissions.
+  deny,
 
+  /// Forward the request to the host application for a user-facing prompt.
+  promptHostApp,
+}
+
+/// The decision made in response to a download request from the webview.
+enum PapyrusDownloadDecision {
+  /// Block the download entirely.
+  block,
+
+  /// Let the operating system's default download manager handle the download.
+  allowSystemDownload,
+
+  /// Hand the download URL to the host application to handle as it sees fit.
+  handToHostApp,
+}
+
+/// Error codes reported by [PapyrusException] and [PapyrusErrorEvent].
 enum PapyrusErrorCode {
+  /// An error occurred for which no more specific code is available.
   unknown,
+
+  /// A navigation attempt was blocked by the active [PapyrusNavigationPolicy].
   navigationBlocked,
+
+  /// A sub-resource request was blocked by the active [PapyrusResourcePolicy].
   resourceBlocked,
+
+  /// A network-level failure occurred (e.g. DNS resolution or connection error).
   networkFailed,
+
+  /// An SSL/TLS certificate error occurred.
   sslFailed,
+
+  /// The page or resource load timed out.
   timeout,
+
+  /// The webview renderer process crashed or was terminated.
   rendererCrashed,
+
+  /// The operation is not supported by the current platform implementation.
   unsupportedPlatformFeature,
+
+  /// The [PapyrusLoadRequest] was invalid or malformed.
   invalidLoadRequest,
+
+  /// The native webview component could not be created or is unavailable.
   webViewUnavailable,
 }
 
-enum PapyrusDarkMode { system, light, dark }
+/// Controls whether the webview renders content in dark mode.
+enum PapyrusDarkMode {
+  /// Follow the host system's light/dark mode setting.
+  system,
 
-enum PapyrusHardwareAccelerationMode { auto, hardware, software }
+  /// Always render in light mode.
+  light,
 
+  /// Always render in dark mode.
+  dark,
+}
+
+/// Controls hardware acceleration for the webview renderer.
+enum PapyrusHardwareAccelerationMode {
+  /// Let the platform decide whether to use hardware acceleration.
+  auto,
+
+  /// Force hardware-accelerated rendering.
+  hardware,
+
+  /// Force software rendering (disables GPU compositing).
+  software,
+}
+
+/// An exception thrown by Papyrus operations.
+///
+/// Contains a machine-readable [code] for programmatic handling and a
+/// human-readable [message] for logging.
 class PapyrusException implements Exception {
+  /// Creates a [PapyrusException] with the given [code] and [message].
   const PapyrusException(this.code, this.message, {this.uri});
 
   final PapyrusErrorCode code;
@@ -78,6 +255,13 @@ class PapyrusException implements Exception {
   String toString() => 'PapyrusException(${code.name}, $message)';
 }
 
+/// The base class for all webview load requests.
+///
+/// Use one of the concrete subtypes:
+/// - [PapyrusHtmlRequest] — load an inline HTML string
+/// - [PapyrusUriRequest] — navigate to a URL
+/// - [PapyrusFileRequest] — load a local file
+/// - [PapyrusDataRequest] — load raw bytes with a MIME type
 sealed class PapyrusLoadRequest {
   const PapyrusLoadRequest();
 
@@ -88,6 +272,7 @@ sealed class PapyrusLoadRequest {
   void validate();
 }
 
+/// A load request that renders an inline HTML string in the webview.
 class PapyrusHtmlRequest extends PapyrusLoadRequest {
   const PapyrusHtmlRequest({
     required this.html,
@@ -138,6 +323,7 @@ class PapyrusHtmlRequest extends PapyrusLoadRequest {
   }
 }
 
+/// A load request that navigates the webview to a URL.
 class PapyrusUriRequest extends PapyrusLoadRequest {
   const PapyrusUriRequest({required this.uri, this.headers = const {}});
 
@@ -158,6 +344,7 @@ class PapyrusUriRequest extends PapyrusLoadRequest {
   }
 }
 
+/// A load request that loads a local file from the device filesystem.
 class PapyrusFileRequest extends PapyrusLoadRequest {
   const PapyrusFileRequest({required this.absolutePath});
 
@@ -181,6 +368,7 @@ class PapyrusFileRequest extends PapyrusLoadRequest {
   }
 }
 
+/// A load request that renders raw binary data with a given MIME type.
 class PapyrusDataRequest extends PapyrusLoadRequest {
   const PapyrusDataRequest({
     required this.bytes,
@@ -217,6 +405,10 @@ class PapyrusDataRequest extends PapyrusLoadRequest {
   }
 }
 
+/// Optional metadata that describes the origin and type of loaded content.
+///
+/// Attach to an [PapyrusHtmlRequest] via [PapyrusHtmlRequest.metadata] to
+/// provide additional context to the platform implementation.
 class PapyrusContentMetadata {
   const PapyrusContentMetadata({
     this.contentType,
@@ -238,6 +430,10 @@ class PapyrusContentMetadata {
   };
 }
 
+/// The top-level configuration object that controls all webview behaviour.
+///
+/// The default constructor produces a fully locked-down configuration suitable
+/// for secure document rendering. Use [PapyrusProfiles] for common presets.
 class PapyrusConfiguration {
   const PapyrusConfiguration({
     this.security = const PapyrusSecurityPolicy(),
@@ -252,17 +448,37 @@ class PapyrusConfiguration {
     this.platform = const PapyrusPlatformOptions(),
   });
 
+  /// Security settings such as JavaScript enablement and content isolation.
   final PapyrusSecurityPolicy security;
+
+  /// Rules governing which URLs the webview may navigate to.
   final PapyrusNavigationPolicy navigation;
+
+  /// Rules governing which sub-resources the webview may load.
   final PapyrusResourcePolicy resources;
+
+  /// JavaScript execution policy including allowed message channels.
   final PapyrusJavaScriptPolicy javascript;
+
+  /// Cookie, localStorage and cache settings.
   final PapyrusStoragePolicy storage;
+
+  /// Media autoplay and inline playback settings.
   final PapyrusMediaPolicy media;
+
+  /// Display options such as auto-height, zoom, dark mode, and viewport.
   final PapyrusDisplayPolicy display;
+
+  /// Accessibility options for native semantics bridges.
   final PapyrusAccessibilityPolicy accessibility;
+
+  /// User interaction options such as text selection and context menu.
   final PapyrusInteractionPolicy interaction;
+
+  /// Low-level platform-specific options.
   final PapyrusPlatformOptions platform;
 
+  /// Returns a copy of this configuration with the given fields replaced.
   PapyrusConfiguration copyWith({
     PapyrusSecurityPolicy? security,
     PapyrusNavigationPolicy? navigation,
@@ -290,11 +506,14 @@ class PapyrusConfiguration {
   }
 }
 
+/// Predefined [PapyrusConfiguration] presets for common use-cases.
 class PapyrusProfiles {
   const PapyrusProfiles._();
 
+  /// A fully locked-down configuration that allows no JavaScript or navigation.
   static PapyrusConfiguration lockedDown() => const PapyrusConfiguration();
 
+  /// A read-only document viewer that opens external links outside the webview.
   static PapyrusConfiguration documentViewer() {
     return const PapyrusConfiguration(
       resources: PapyrusResourcePolicy(
@@ -306,6 +525,7 @@ class PapyrusProfiles {
     );
   }
 
+  /// A balanced configuration for trusted first-party content with restricted JavaScript.
   static PapyrusConfiguration trustedAppContent() {
     return const PapyrusConfiguration(
       security: PapyrusSecurityPolicy(allowJavaScript: true),
@@ -322,6 +542,7 @@ class PapyrusProfiles {
     );
   }
 
+  /// A permissive browser-like configuration with JavaScript, cookies, and navigation enabled.
   static PapyrusConfiguration browserLike() {
     return const PapyrusConfiguration(
       security: PapyrusSecurityPolicy(
@@ -348,6 +569,7 @@ class PapyrusProfiles {
     );
   }
 
+  /// A strict configuration for safely displaying untrusted HTML email content.
   static PapyrusConfiguration emailHtmlViewer() {
     return const PapyrusConfiguration(
       navigation: PapyrusNavigationPolicy(
@@ -370,7 +592,10 @@ class PapyrusProfiles {
   }
 }
 
+/// Security policy controlling JavaScript, file access, popups, and other
+/// sensitive browser capabilities.
 class PapyrusSecurityPolicy {
+  /// Creates a [PapyrusSecurityPolicy].
   const PapyrusSecurityPolicy({
     this.allowJavaScript = false,
     this.allowInlineMediaPlayback = false,
@@ -404,7 +629,9 @@ class PapyrusSecurityPolicy {
   final String? contentSecurityPolicy;
 }
 
+/// Policy that controls which navigations the webview is allowed to perform.
 class PapyrusNavigationPolicy {
+  /// Creates a [PapyrusNavigationPolicy].
   const PapyrusNavigationPolicy({
     this.defaultDecision = PapyrusNavigationDecision.block,
     this.allowedSchemes = const {'https'},
@@ -446,7 +673,10 @@ class PapyrusNavigationPolicy {
   }
 }
 
+/// Describes a navigation attempt in the webview, passed to a
+/// [PapyrusNavigationResolver] for policy evaluation.
 class PapyrusNavigationRequest {
+  /// Creates a [PapyrusNavigationRequest].
   const PapyrusNavigationRequest({
     required this.uri,
     required this.isMainFrame,
@@ -478,7 +708,10 @@ class PapyrusNavigationRequest {
   }
 }
 
+/// Policy that controls how the webview loads sub-resources such as images,
+/// scripts, and stylesheets.
 class PapyrusResourcePolicy {
+  /// Creates a [PapyrusResourcePolicy].
   const PapyrusResourcePolicy({
     this.remoteResources = PapyrusRemoteResourceMode.block,
     this.allowedHosts = const {},
@@ -511,7 +744,9 @@ class PapyrusResourcePolicy {
   }
 }
 
+/// Policy governing JavaScript execution and host-app channel communication.
 class PapyrusJavaScriptPolicy {
+  /// Creates a [PapyrusJavaScriptPolicy].
   const PapyrusJavaScriptPolicy({
     this.mode = PapyrusJavaScriptMode.disabled,
     this.allowedChannels = const {},
@@ -525,13 +760,18 @@ class PapyrusJavaScriptPolicy {
   final List<PapyrusUserScript> injectedScripts;
 }
 
+/// A JavaScript snippet that is injected into every page loaded by the webview.
 class PapyrusUserScript {
+  /// Creates a [PapyrusUserScript] with the given [source] code.
   const PapyrusUserScript(this.source);
 
+  /// The JavaScript source code to inject.
   final String source;
 }
 
+/// Policy controlling cookie storage, local storage, and HTTP cache behaviour.
 class PapyrusStoragePolicy {
+  /// Creates a [PapyrusStoragePolicy].
   const PapyrusStoragePolicy({
     this.cookies = PapyrusCookiePolicy.block,
     this.localStorage = PapyrusStorageMode.disabled,
@@ -547,7 +787,9 @@ class PapyrusStoragePolicy {
   final String? partitionId;
 }
 
+/// Policy controlling media autoplay, inline playback, and fullscreen.
 class PapyrusMediaPolicy {
+  /// Creates a [PapyrusMediaPolicy].
   const PapyrusMediaPolicy({
     this.autoPlay = false,
     this.inlinePlayback = false,
@@ -561,7 +803,10 @@ class PapyrusMediaPolicy {
   final bool allowFullscreen;
 }
 
+/// Policy controlling display options such as auto-height, zoom, dark mode,
+/// text zoom, and background colour.
 class PapyrusDisplayPolicy {
+  /// Creates a [PapyrusDisplayPolicy].
   const PapyrusDisplayPolicy({
     this.autoHeight = false,
     this.minimumHeight,
@@ -585,14 +830,21 @@ class PapyrusDisplayPolicy {
   final PapyrusMeasurementPolicy measurement;
 }
 
+/// Viewport meta-tag settings injected into loaded HTML documents.
 class PapyrusViewportPolicy {
+  /// Creates a [PapyrusViewportPolicy].
   const PapyrusViewportPolicy({this.width = 'device-width', this.scale = 1.0});
 
+  /// The viewport width value (e.g. `'device-width'` or a pixel amount).
   final String width;
+
+  /// The initial zoom scale (1.0 = no zoom).
   final double scale;
 }
 
+/// Policy controlling content-size measurement and mutation observation.
 class PapyrusMeasurementPolicy {
+  /// Creates a [PapyrusMeasurementPolicy].
   const PapyrusMeasurementPolicy({
     this.observeMutations = true,
     this.debounceMillis = 50,
@@ -602,13 +854,18 @@ class PapyrusMeasurementPolicy {
   final int debounceMillis;
 }
 
+/// Accessibility options for the webview.
 class PapyrusAccessibilityPolicy {
+  /// Creates a [PapyrusAccessibilityPolicy].
   const PapyrusAccessibilityPolicy({this.enableNativeSemantics = true});
 
+  /// Whether to enable the native accessibility semantics bridge.
   final bool enableNativeSemantics;
 }
 
+/// Policy controlling pointer and gesture interaction with the webview content.
 class PapyrusInteractionPolicy {
+  /// Creates a [PapyrusInteractionPolicy].
   const PapyrusInteractionPolicy({
     this.allowTextSelection = true,
     this.allowContextMenu = true,
@@ -620,7 +877,9 @@ class PapyrusInteractionPolicy {
   final bool allowLongPress;
 }
 
+/// Low-level platform-specific options not covered by the cross-platform policy model.
 class PapyrusPlatformOptions {
+  /// Creates a [PapyrusPlatformOptions].
   const PapyrusPlatformOptions({
     this.debuggingEnabled = false,
     this.hardwareAcceleration = PapyrusHardwareAccelerationMode.auto,

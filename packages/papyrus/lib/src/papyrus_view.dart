@@ -9,7 +9,12 @@ import 'package:papyrus_platform_interface/papyrus_platform_interface.dart';
 
 import 'papyrus_controller.dart';
 
+/// A Flutter widget that renders a Papyrus webview surface.
+///
+/// Provide a [controller], optional [initialRequest], and callback hooks for
+/// navigation/resource decisions and event handling.
 class PapyrusView extends StatefulWidget {
+  /// Creates a [PapyrusView].
   const PapyrusView({
     super.key,
     required this.controller,
@@ -30,25 +35,56 @@ class PapyrusView extends StatefulWidget {
     this.onContentSizeChanged,
   });
 
+  /// The controller that owns this webview instance.
   final PapyrusController controller;
+
+  /// Optional request loaded automatically after initialization.
   final PapyrusLoadRequest? initialRequest;
+
+  /// Behaviour and security configuration for the webview.
   final PapyrusConfiguration configuration;
+
+  /// Gesture recognizers passed through to the embedded native view.
   final Set<Factory<OneSequenceGestureRecognizer>>? gestureRecognizers;
+
+  /// Called when this widget has attached and configured [controller].
   final ValueChanged<PapyrusController>? onCreated;
+
+  /// Called when a page starts loading.
   final ValueChanged<PapyrusPageStartedEvent>? onPageStarted;
+
+  /// Called when a page finishes loading.
   final ValueChanged<PapyrusPageFinishedEvent>? onPageFinished;
+
+  /// Called as page loading progress changes.
   final ValueChanged<PapyrusProgressEvent>? onProgressChanged;
+
+  /// Optional async callback to decide whether a navigation should proceed.
   final Future<PapyrusNavigationDecision> Function(PapyrusNavigationRequest)?
   onNavigationRequest;
+
+  /// Optional async callback to decide how a resource request is handled.
   final Future<PapyrusResourceDecision> Function(PapyrusResourceRequest)?
   onResourceRequest;
+
+  /// Optional async callback to decide how downloads are handled.
   final Future<PapyrusDownloadDecision> Function(PapyrusDownloadRequest)?
   onDownloadRequest;
+
+  /// Optional async callback to decide how permission requests are handled.
   final Future<PapyrusPermissionDecision> Function(PapyrusPermissionRequest)?
   onPermissionRequest;
+
+  /// Called when a JavaScript console message is emitted.
   final ValueChanged<PapyrusConsoleMessage>? onConsoleMessage;
+
+  /// Called when a JavaScript channel message is received.
   final ValueChanged<PapyrusWebMessage>? onWebMessage;
+
+  /// Called when a loading or runtime error is reported.
   final ValueChanged<PapyrusErrorEvent>? onError;
+
+  /// Called when content size changes are reported by the platform.
   final ValueChanged<PapyrusContentSize>? onContentSizeChanged;
 
   @override

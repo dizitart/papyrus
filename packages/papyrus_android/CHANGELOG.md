@@ -1,3 +1,11 @@
+## 0.1.1
+
+* Added package-local LICENSE and example to improve pub.dev quality signals.
+
+* Expanded public API documentation coverage for Android implementation.
+
+* Documentation and metadata refinements for pub score conformance.
+
 ## 0.1.0
 
 * Initial release.

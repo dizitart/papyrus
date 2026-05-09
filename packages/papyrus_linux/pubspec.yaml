@@ -1,6 +1,6 @@
 name: papyrus_linux
-description: Linux WebKitGTK implementation for Papyrus.
-version: 0.1.0
+description: Linux WebKitGTK backend for Papyrus, a secure policy-driven federated WebView plugin for Flutter apps.
+version: 0.1.1
 homepage: https://github.com/dizitart/papyrus
 repository: https://github.com/dizitart/papyrus/tree/main/packages/papyrus_linux
 issue_tracker: https://github.com/dizitart/papyrus/issues

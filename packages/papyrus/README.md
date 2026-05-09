@@ -1,4 +1,4 @@
-# papyrus
+# Papyrus
 
 A policy-driven federated native WebView for Flutter. Papyrus embeds the platform system WebView on each supported target and exposes a uniform, conservative-by-default API for loading, navigation, resource control, security, storage, and interaction policy.
 

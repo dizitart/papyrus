@@ -1,3 +1,11 @@
+## 0.1.1
+
+* Added package-local LICENSE and example to improve pub.dev quality signals.
+
+* Expanded API documentation coverage for public models and policies.
+
+* Formatting and metadata refinements for pub score conformance.
+
 ## 0.1.0
 
 * Initial release.
