@@ -1,13 +1,20 @@
 name: Publish to pub.dev
 
-# Triggered by version tags of the form v<semver>, e.g. v0.1.0, v1.2.3.
-# All packages in the monorepo are published at the same version in a
-# coordinated release.
+# Runs after the CI workflow completes successfully on a version tag push.
+# This guarantees all checks (analyze, test, acceptance) are green before
+# any package is published to pub.dev.
+#
+# ── Dependency chain ──────────────────────────────────────────────────────
+#
+#   git push origin main v0.1.x
+#       │
+#       ├─► CI workflow runs (analyze + test + acceptance) on the tag commit
+#       │
+#       └─► (only if CI passes) this workflow fires via workflow_run
 #
 # ── First-time setup (do once per package on pub.dev) ─────────────────────
 #
-# 1. Publish the package manually once (or use PUB_TOKEN) so the package
-#    exists on pub.dev and you can configure it:
+# 1. Publish the package manually once so the package exists on pub.dev:
 #
 #      dart run tool/publish.dart     # from repo root
 #
@@ -18,8 +25,8 @@ name: Publish to pub.dev
 #      • Workflow:    publish.yml
 #      • Tag pattern: v{{version}}    (the default)
 #
-# 3. After that, every new v* tag on main will publish all packages via OIDC —
-#    no stored credentials required.
+# 3. After that, every new v* tag triggers CI → Publish in sequence with no
+#    stored credentials required (OIDC).
 #
 # ── Releasing ─────────────────────────────────────────────────────────────
 #
@@ -33,11 +40,13 @@ name: Publish to pub.dev
 # wait 60 s between packages for pub.dev index propagation.
 
 on:
-  push:
-    tags:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    # Matches the head branch / tag name set by the CI trigger.
+    # For tag pushes the head_branch is the tag name (e.g. "v0.1.1").
+    branches:
       - "v[0-9]+.[0-9]+.[0-9]+"
-
-# No extra branches; tags only.
 
 permissions:
   id-token: write # Required for pub.dev OIDC automated publishing
@@ -46,9 +55,15 @@ jobs:
   publish:
     name: Publish packages
     runs-on: ubuntu-latest
+    # Only proceed when CI passed; skip silently on failure/cancellation.
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Check out the exact commit that CI validated, not whatever HEAD
+          # happens to be on main at the time this workflow starts.
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Flutter (stable)
         uses: subosito/flutter-action@v2

@@ -1,0 +1,76 @@
+version: 2
+
+updates:
+  # ── GitHub Actions ────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # ── Dart / Flutter packages ───────────────────────────────────────────────
+  - package-ecosystem: "pub"
+    directory: "/packages/papyrus_platform_interface"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "dart"
+
+  - package-ecosystem: "pub"
+    directory: "/packages/papyrus_android"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "dart"
+
+  - package-ecosystem: "pub"
+    directory: "/packages/papyrus_ios"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "dart"
+
+  - package-ecosystem: "pub"
+    directory: "/packages/papyrus_macos"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "dart"
+
+  - package-ecosystem: "pub"
+    directory: "/packages/papyrus_windows"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "dart"
+
+  - package-ecosystem: "pub"
+    directory: "/packages/papyrus_linux"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "dart"
+
+  - package-ecosystem: "pub"
+    directory: "/packages/papyrus"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "dart"
