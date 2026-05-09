@@ -1,9 +1,14 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+
 import 'models.dart';
 
-abstract class PapyrusPlatform {
+abstract class PapyrusPlatform extends PlatformInterface {
+  PapyrusPlatform() : super(token: _token);
+
+  static final Object _token = Object();
   static PapyrusPlatform _instance = _UnsupportedPapyrusPlatform();
 
   // Setter kept explicit so platform registration can gain validation later.
@@ -11,6 +16,7 @@ abstract class PapyrusPlatform {
   static PapyrusPlatform get instance => _instance;
 
   static set instance(PapyrusPlatform instance) {
+    PlatformInterface.verifyToken(instance, _token);
     _instance = instance;
   }
 

@@ -4,6 +4,20 @@ import 'package:papyrus_platform_interface/papyrus_platform_interface.dart';
 import 'package:test/test.dart';
 
 void main() {
+  tearDown(() {
+    PapyrusPlatform.instance = _FakePapyrusPlatform();
+  });
+
+  group('platform registration', () {
+    test('allows implementations that extend the platform interface', () {
+      final platform = _FakePapyrusPlatform();
+
+      PapyrusPlatform.instance = platform;
+
+      expect(PapyrusPlatform.instance, same(platform));
+    });
+  });
+
   group('load requests', () {
     test('HTML request serializes metadata and virtual resources', () {
       final request = PapyrusHtmlRequest(
@@ -316,6 +330,8 @@ void main() {
     });
   });
 }
+
+class _FakePapyrusPlatform extends PapyrusPlatform {}
 
 class _NullProvider implements PapyrusVirtualResourceProvider {
   @override
