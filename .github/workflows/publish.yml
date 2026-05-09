@@ -106,6 +106,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # dart-lang/setup-dart provisions the GitHub OIDC token that pub.dev
+      # trusted publishing consumes. Flutter's Dart SDK is installed below and
+      # may shadow this `dart`, but the pub authentication state remains.
+      - name: Set up Dart for pub.dev OIDC
+        uses: dart-lang/setup-dart@v1
+
       - name: Set up Flutter (stable)
         uses: subosito/flutter-action@v2
         with:
@@ -126,9 +132,7 @@ jobs:
           PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
         run: |
           mkdir -p "$HOME/.pub-cache"
-          cat > "$HOME/.pub-cache/credentials.json" <<'EOF'
-          $PUB_CREDENTIALS
-          EOF
+          printf '%s' "$PUB_CREDENTIALS" > "$HOME/.pub-cache/credentials.json"
 
       # Validate that every package passes `pub publish --dry-run` before
       # touching pub.dev.

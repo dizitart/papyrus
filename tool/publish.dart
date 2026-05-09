@@ -224,24 +224,37 @@ Future<bool> _publish(String pkgDir, {required bool dryRun}) async {
     outputBuffer.writeln(line);
   }).asFuture<void>();
 
-  final exitCode = await process.exitCode.timeout(
-    _publishTimeout,
-    onTimeout: () {
-      _log(
-        '  ERROR: publish command timed out after '
-        '${_publishTimeout.inMinutes} minutes; terminating process.',
-      );
-      process.kill(ProcessSignal.sigterm);
-      return -1;
-    },
-  );
+  var timedOut = false;
+  Timer? forceKillTimer;
+  final timeoutTimer = Timer(_publishTimeout, () {
+    timedOut = true;
+    _log(
+      '  ERROR: publish command timed out after '
+      '${_publishTimeout.inMinutes} minutes; terminating process.',
+    );
+    process.kill(ProcessSignal.sigterm);
+    forceKillTimer = Timer(const Duration(seconds: 5), () {
+      if (process.kill(ProcessSignal.sigkill)) {
+        _log('  Force-killed timed out publish process.');
+      }
+    });
+  });
 
+  final exitCode = await process.exitCode;
+  timeoutTimer.cancel();
+  forceKillTimer?.cancel();
   heartbeat.cancel();
+
   await stdoutDone;
   await stderrDone;
 
-  if (exitCode == -1 && process.kill(ProcessSignal.sigkill)) {
-    _log('  Force-killed timed out publish process.');
+  if (timedOut) {
+    if (exitCode != 0) {
+      return false;
+    }
+    // A publish command that exceeded our timeout is treated as failed even if
+    // it eventually exits zero after being signaled.
+    return false;
   }
 
   if (exitCode != 0) {
@@ -260,6 +273,6 @@ Future<bool> _publish(String pkgDir, {required bool dryRun}) async {
 void _log(String message) => print(message);
 
 Never _die(String message) {
-  stderr.writeln('FATAL: $message');
+  stderr.writeln('ERROR: $message');
   exit(1);
 }
