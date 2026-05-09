@@ -156,12 +156,14 @@ Future<bool> _publish(String pkgDir, {required bool dryRun}) async {
   final isFlutter = pubspecContent.contains('sdk: flutter');
 
   final executable = isFlutter ? 'flutter' : 'dart';
-  final publishArgs = <String>[
-    'pub',
-    'publish',
-    '--force',
-    if (dryRun) '--dry-run',
-  ];
+  final publishArgs = <String>['pub', 'publish'];
+
+  if (dryRun) {
+    publishArgs.add('--dry-run');
+    publishArgs.add('--skip-validation');
+  } else {
+    publishArgs.add('--force');
+  }
 
   _log('  Running: $executable ${publishArgs.join(' ')}');
 
