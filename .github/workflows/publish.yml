@@ -116,12 +116,17 @@ jobs:
 
       # Optional fallback for environments where trusted publishing is not yet
       # fully configured on every package admin page.
+      - name: Load pub credentials secret
+        run: echo "PUB_CREDENTIALS_PRESENT=${{ secrets.PUB_CREDENTIALS != '' }}" >> "$GITHUB_ENV"
+
       - name: Configure pub credentials fallback
-        if: ${{ secrets.PUB_CREDENTIALS != '' }}
+        if: ${{ env.PUB_CREDENTIALS_PRESENT == 'true' }}
+        env:
+          PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
         run: |
           mkdir -p "$HOME/.pub-cache"
           cat > "$HOME/.pub-cache/credentials.json" <<'EOF'
-          ${{ secrets.PUB_CREDENTIALS }}
+          $PUB_CREDENTIALS
           EOF
 
       # Validate that every package passes `pub publish --dry-run` before
