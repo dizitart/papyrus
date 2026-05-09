@@ -24,6 +24,7 @@
 //   7. papyrus                      — depends on all of the above
 
 import 'dart:io';
+import 'dart:async';
 
 /// Packages in publish order (dependency graph bottom-up).
 const _packages = <String>[
@@ -38,6 +39,12 @@ const _packages = <String>[
 
 /// How long to wait between publishes for pub.dev index propagation.
 const _propagationDelay = Duration(seconds: 60);
+
+/// Hard timeout for each `pub publish` invocation.
+const _publishTimeout = Duration(minutes: 15);
+
+/// Periodic keepalive log while a publish command is running.
+const _publishHeartbeat = Duration(seconds: 30);
 
 /// Regex that matches a two-line path dependency block and replaces it with
 /// a single inline version constraint. Pattern matches:
@@ -185,21 +192,43 @@ Future<bool> _publish(String pkgDir, {required bool dryRun}) async {
 
   _log('  Running: $executable ${publishArgs.join(' ')}');
 
-  final result = await Process.run(
+  final process = await Process.start(
     executable,
     publishArgs,
     workingDirectory: pkgDir,
     runInShell: true,
   );
 
-  if (result.stdout.toString().isNotEmpty) {
-    stdout.write(result.stdout);
-  }
-  if (result.stderr.toString().isNotEmpty) {
-    stderr.write(result.stderr);
+  final startedAt = DateTime.now();
+  final heartbeat = Timer.periodic(_publishHeartbeat, (_) {
+    final elapsed = DateTime.now().difference(startedAt).inSeconds;
+    _log('  Still publishing... (${elapsed}s elapsed)');
+  });
+
+  final stdoutDone = stdout.addStream(process.stdout);
+  final stderrDone = stderr.addStream(process.stderr);
+
+  final exitCode = await process.exitCode.timeout(
+    _publishTimeout,
+    onTimeout: () {
+      _log(
+        '  ERROR: publish command timed out after '
+        '${_publishTimeout.inMinutes} minutes; terminating process.',
+      );
+      process.kill(ProcessSignal.sigterm);
+      return -1;
+    },
+  );
+
+  heartbeat.cancel();
+  await stdoutDone;
+  await stderrDone;
+
+  if (exitCode == -1 && process.kill(ProcessSignal.sigkill)) {
+    _log('  Force-killed timed out publish process.');
   }
 
-  return result.exitCode == 0;
+  return exitCode == 0;
 }
 
 void _log(String message) => print(message);
