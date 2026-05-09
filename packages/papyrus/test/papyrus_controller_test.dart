@@ -111,34 +111,35 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
-  testWidgets('PapyrusView waits for overlay viewport application before initial load', (
-    tester,
-  ) async {
-    final platform = DelayedViewportOverlayPapyrusPlatform();
-    PapyrusPlatform.instance = platform;
-    final controller = PapyrusController.create();
+  testWidgets(
+    'PapyrusView waits for overlay viewport application before initial load',
+    (tester) async {
+      final platform = DelayedViewportOverlayPapyrusPlatform();
+      PapyrusPlatform.instance = platform;
+      final controller = PapyrusController.create();
 
-    await tester.pumpWidget(
-      SizedBox(
-        width: 320,
-        height: 180,
-        child: PapyrusView(
-          controller: controller,
-          initialRequest: const PapyrusHtmlRequest(html: '<p>Overlay</p>'),
+      await tester.pumpWidget(
+        SizedBox(
+          width: 320,
+          height: 180,
+          child: PapyrusView(
+            controller: controller,
+            initialRequest: const PapyrusHtmlRequest(html: '<p>Overlay</p>'),
+          ),
         ),
-      ),
-    );
-    await tester.pump();
+      );
+      await tester.pump();
 
-    expect(platform.viewports, isNotEmpty);
-    expect(platform.loaded, isEmpty);
+      expect(platform.viewports, isNotEmpty);
+      expect(platform.loaded, isEmpty);
 
-    platform.completeViewportSync();
-    await tester.pump();
+      platform.completeViewportSync();
+      await tester.pump();
 
-    expect(platform.loaded, hasLength(1));
-    expect(platform.loaded.single, isA<PapyrusHtmlRequest>());
-  });
+      expect(platform.loaded, hasLength(1));
+      expect(platform.loaded.single, isA<PapyrusHtmlRequest>());
+    },
+  );
 
   testWidgets('PapyrusView reloads when the initial request changes', (
     tester,

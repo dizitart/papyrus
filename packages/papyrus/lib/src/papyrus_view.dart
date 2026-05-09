@@ -377,7 +377,7 @@ class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
     if (changed) {
       _lastSent = snapshot;
       final controller = widget.controller;
-    unawaited(
+      unawaited(
         controller
             .setViewport(
               x: snapshot.x,
@@ -393,7 +393,7 @@ class _DesktopOverlaySurfaceState extends State<_DesktopOverlaySurface>
                 widget.onViewportReady();
               }
             }),
-    );
+      );
     } else if (viewportReady) {
       widget.onViewportReady();
     }
