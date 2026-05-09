@@ -23,8 +23,9 @@
 //   6. papyrus_linux                — depends on platform_interface
 //   7. papyrus                      — depends on all of the above
 
-import 'dart:io';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 /// Packages in publish order (dependency graph bottom-up).
 const _packages = <String>[
@@ -38,7 +39,7 @@ const _packages = <String>[
 ];
 
 /// How long to wait between publishes for pub.dev index propagation.
-const _propagationDelay = Duration(seconds: 60);
+const _propagationDelay = Duration(seconds: 180);
 
 /// Hard timeout for each `pub publish` invocation.
 const _publishTimeout = Duration(minutes: 15);
@@ -205,8 +206,23 @@ Future<bool> _publish(String pkgDir, {required bool dryRun}) async {
     _log('  Still publishing... (${elapsed}s elapsed)');
   });
 
-  final stdoutDone = stdout.addStream(process.stdout);
-  final stderrDone = stderr.addStream(process.stderr);
+  // Capture output so we can detect already-published responses.
+  final outputBuffer = StringBuffer();
+  final stdoutLines = process.stdout
+      .transform(const SystemEncoding().decoder)
+      .transform(const LineSplitter());
+  final stderrLines = process.stderr
+      .transform(const SystemEncoding().decoder)
+      .transform(const LineSplitter());
+
+  final stdoutDone = stdoutLines.listen((line) {
+    stdout.writeln(line);
+    outputBuffer.writeln(line);
+  }).asFuture<void>();
+  final stderrDone = stderrLines.listen((line) {
+    stderr.writeln(line);
+    outputBuffer.writeln(line);
+  }).asFuture<void>();
 
   final exitCode = await process.exitCode.timeout(
     _publishTimeout,
@@ -226,6 +242,17 @@ Future<bool> _publish(String pkgDir, {required bool dryRun}) async {
 
   if (exitCode == -1 && process.kill(ProcessSignal.sigkill)) {
     _log('  Force-killed timed out publish process.');
+  }
+
+  if (exitCode != 0) {
+    // Treat already-published versions as success so re-runs are safe.
+    final output = outputBuffer.toString();
+    if (output.contains('already published') ||
+        output.contains('Version already exists') ||
+        output.contains('version already exists')) {
+      _log('  Already published — skipping.');
+      return true;
+    }
   }
 
   return exitCode == 0;

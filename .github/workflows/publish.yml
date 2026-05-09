@@ -41,6 +41,7 @@ on:
 
 permissions:
   actions: read
+  contents: write # Required to update workflow_run status for publish.yml
   id-token: write # Required for pub.dev OIDC automated publishing
 
 jobs:
