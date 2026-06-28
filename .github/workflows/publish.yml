@@ -104,7 +104,7 @@ jobs:
     needs: wait-for-ci
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # dart-lang/setup-dart provisions the GitHub OIDC token that pub.dev
       # trusted publishing consumes. Flutter's Dart SDK is installed below and
