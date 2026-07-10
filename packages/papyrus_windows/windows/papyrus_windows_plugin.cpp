@@ -1152,6 +1152,14 @@ void PapyrusWindowsPlugin::ApplySettings() {
     settings->put_AreDefaultContextMenusEnabled(
       BoolFromValue(configuration_, "allowContextMenu", true) ? TRUE : FALSE);
   settings->put_IsStatusBarEnabled(FALSE);
+
+  const std::string user_agent = StringFromValue(configuration_, "userAgent");
+  if (!user_agent.empty()) {
+    ComPtr<ICoreWebView2Settings2> settings2;
+    if (SUCCEEDED(settings.As(&settings2)) && settings2) {
+      settings2->put_UserAgent(Utf8ToWide(user_agent).c_str());
+    }
+  }
 }
 
 void PapyrusWindowsPlugin::ApplyBounds() {

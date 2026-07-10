@@ -87,6 +87,21 @@ void main() {
         config.platform.hardwareAcceleration,
         PapyrusHardwareAccelerationMode.auto,
       );
+      expect(config.userAgent, isNull);
+    });
+
+    test('copyWith overrides the user agent and preserves it otherwise', () {
+      const config = PapyrusConfiguration(userAgent: 'Agent/1.0');
+
+      expect(config.copyWith().userAgent, 'Agent/1.0');
+      expect(config.copyWith(userAgent: 'Agent/2.0').userAgent, 'Agent/2.0');
+    });
+
+    test('user agent defaults to null in the serialized map', () {
+      expect(
+        papyrusConfigurationToMap(const PapyrusConfiguration())['userAgent'],
+        isNull,
+      );
     });
 
     test('email profile blocks scripts, storage, and remote resources', () {
@@ -185,6 +200,7 @@ void main() {
             debuggingEnabled: true,
             hardwareAcceleration: PapyrusHardwareAccelerationMode.software,
           ),
+          userAgent: 'PapyrusAgent/1.0',
         ),
         resourceResolverEnabled: true,
       );
@@ -202,6 +218,7 @@ void main() {
       expect(map['allowLongPress'], isFalse);
       expect(map['resourceResolverEnabled'], isTrue);
       expect(map['hardwareAcceleration'], 'software');
+      expect(map['userAgent'], 'PapyrusAgent/1.0');
     });
   });
 

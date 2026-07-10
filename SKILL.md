@@ -119,6 +119,19 @@ await controller.load(
 
 Pass that `configuration` to `PapyrusView`.
 
+## Custom User-Agent
+
+Set `PapyrusConfiguration.userAgent` to override the session User-Agent on every
+backend. When non-null it applies globally (sub-resources, XHR/fetch, and
+`navigator.userAgent`), not just the first document request. Leave it null to
+keep the platform default.
+
+```dart
+final configuration = PapyrusProfiles.browserLike().copyWith(
+  userAgent: 'MyApp-InAppWebView/1.0',
+);
+```
+
 ## Host Policy Hooks
 
 Use callbacks for decisions that depend on app state:

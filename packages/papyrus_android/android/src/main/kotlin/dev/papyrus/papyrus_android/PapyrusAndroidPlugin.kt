@@ -241,6 +241,9 @@ class PapyrusAndroidPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
         view.settings.setSupportZoom(config["zoomEnabled"] != false)
         view.settings.setSupportMultipleWindows(config["allowPopups"] == true)
+        (config["userAgent"] as? String)?.takeUnless { it.isBlank() }?.let {
+            view.settings.userAgentString = it
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
             val allowUniversalAccess = config["allowUniversalAccessFromFileUrls"] == true
             view.settings.allowFileAccessFromFileURLs = allowUniversalAccess

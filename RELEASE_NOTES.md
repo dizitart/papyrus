@@ -1,5 +1,12 @@
 # Release Notes
 
+## Unreleased
+
+- Added `PapyrusConfiguration.userAgent` to override the session User-Agent
+  string. When set, it is applied globally by every native backend (Android,
+  iOS, macOS, Windows, Linux) — affecting sub-resources, XHR/fetch, and
+  `navigator.userAgent`, not only the top-level document request.
+
 ## 0.1.1
 
 - Added package-local LICENSE files and runnable package examples.

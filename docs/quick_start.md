@@ -18,6 +18,24 @@ PapyrusView(
 Use `PapyrusProfiles.lockedDown()` for untrusted static HTML and opt into more
 permissive policies only when the content source is trusted.
 
+## Custom User-Agent
+
+Set `PapyrusConfiguration.userAgent` to override the session User-Agent. It is
+applied globally by the native engine — covering sub-resources, XHR/fetch, and
+`navigator.userAgent` — so servers and scripts can identify the embedding app.
+
+```dart
+PapyrusView(
+  controller: controller,
+  configuration: PapyrusProfiles.browserLike().copyWith(
+    userAgent: 'MyApp-InAppWebView/1.0',
+  ),
+  initialRequest: PapyrusUriRequest(uri: Uri.parse('https://example.com')),
+);
+```
+
+Leave it unset (`null`) to keep each platform's built-in User-Agent.
+
 On macOS, sandboxed apps must include the
 `com.apple.security.network.client` entitlement for `WKWebView` to load
 content reliably. Add it to both `DebugProfile.entitlements` and
