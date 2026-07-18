@@ -1,6 +1,6 @@
 # Release Notes
 
-## Unreleased
+## 0.2.0
 
 - Added `PapyrusConfiguration.userAgent` to override the session User-Agent
   string. When set, it is applied globally by every native backend (Android,

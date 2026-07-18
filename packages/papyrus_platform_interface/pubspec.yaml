@@ -1,6 +1,6 @@
 name: papyrus_platform_interface
 description: Shared platform interface and data contracts for Papyrus.
-version: 0.1.1
+version: 0.2.0
 homepage: https://github.com/dizitart/papyrus
 repository: https://github.com/dizitart/papyrus
 issue_tracker: https://github.com/dizitart/papyrus/issues

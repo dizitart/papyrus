@@ -1,3 +1,8 @@
+## 0.2.0
+
+* Applied `PapyrusConfiguration.userAgent` via
+  `ICoreWebView2Settings2::put_UserAgent` when set.
+
 ## 0.1.1
 
 * Added package-local LICENSE and example to improve pub.dev quality signals.

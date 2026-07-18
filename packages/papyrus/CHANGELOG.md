@@ -1,3 +1,8 @@
+## 0.2.0
+
+* Added `PapyrusConfiguration.userAgent` to override the WebView session
+  User-Agent string across all platform backends.
+
 ## 0.1.1
 
 * Added package-local LICENSE and runnable package example.
