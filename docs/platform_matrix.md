@@ -8,6 +8,11 @@
 | Windows | WebView2 | Yes, desktop overlay | Yes | Partial | Yes | Partial | Yes |
 | Linux | WebKitGTK | Yes, desktop overlay | Feasible | Yes | Partial | Partial | Yes |
 
+A custom session User-Agent (`PapyrusConfiguration.userAgent`) is honored on all
+five backends via each engine's native setting (Android `userAgentString`,
+WKWebView `customUserAgent`, WebView2 `ICoreWebView2Settings2::UserAgent`,
+WebKitGTK `webkit_settings_set_user_agent`).
+
 Capability queries are authoritative at runtime. This matrix documents expected
 v1 behavior, not a substitute for `PapyrusController.getCapabilities()`.
 

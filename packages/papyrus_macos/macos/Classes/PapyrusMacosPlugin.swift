@@ -174,6 +174,9 @@ public class PapyrusMacosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, 
     }
     view.navigationDelegate = self
     view.uiDelegate = self
+    if let userAgent = config["userAgent"] as? String, !userAgent.isEmpty {
+      view.customUserAgent = userAgent
+    }
     if let existingView = webView, existingView !== view {
       existingView.removeFromSuperview()
     }

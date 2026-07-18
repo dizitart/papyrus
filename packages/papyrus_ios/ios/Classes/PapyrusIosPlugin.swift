@@ -160,6 +160,9 @@ public class PapyrusIosPlugin: NSObject, FlutterPlugin, WKNavigationDelegate, WK
     let view = WKWebView(frame: .zero, configuration: webConfig)
     view.navigationDelegate = self
     view.uiDelegate = self
+    if let userAgent = config["userAgent"] as? String, !userAgent.isEmpty {
+      view.customUserAgent = userAgent
+    }
     webView = view
     runPendingLoadIfNeeded()
     return view

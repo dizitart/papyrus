@@ -446,6 +446,7 @@ class PapyrusConfiguration {
     this.accessibility = const PapyrusAccessibilityPolicy(),
     this.interaction = const PapyrusInteractionPolicy(),
     this.platform = const PapyrusPlatformOptions(),
+    this.userAgent,
   });
 
   /// Security settings such as JavaScript enablement and content isolation.
@@ -478,6 +479,14 @@ class PapyrusConfiguration {
   /// Low-level platform-specific options.
   final PapyrusPlatformOptions platform;
 
+  /// A custom User-Agent string applied to the whole webview session.
+  ///
+  /// When non-null and non-empty, the native engine's user agent is overridden
+  /// for all requests (including sub-resources and XHR/fetch) and
+  /// `navigator.userAgent`. When null (the default), the platform's built-in
+  /// user agent is used unchanged.
+  final String? userAgent;
+
   /// Returns a copy of this configuration with the given fields replaced.
   PapyrusConfiguration copyWith({
     PapyrusSecurityPolicy? security,
@@ -490,6 +499,7 @@ class PapyrusConfiguration {
     PapyrusAccessibilityPolicy? accessibility,
     PapyrusInteractionPolicy? interaction,
     PapyrusPlatformOptions? platform,
+    String? userAgent,
   }) {
     return PapyrusConfiguration(
       security: security ?? this.security,
@@ -502,6 +512,7 @@ class PapyrusConfiguration {
       accessibility: accessibility ?? this.accessibility,
       interaction: interaction ?? this.interaction,
       platform: platform ?? this.platform,
+      userAgent: userAgent ?? this.userAgent,
     );
   }
 }
@@ -1306,6 +1317,7 @@ JsonMap papyrusConfigurationToMap(
   'resourceResolverEnabled': resourceResolverEnabled,
   'debuggingEnabled': configuration.platform.debuggingEnabled,
   'hardwareAcceleration': configuration.platform.hardwareAcceleration.name,
+  'userAgent': configuration.userAgent,
 };
 
 PapyrusResourceType _resourceTypeFromName(String name) {

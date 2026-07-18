@@ -70,6 +70,7 @@ Papyrus should expose privacy-oriented resource controls:
   iframes.
 - Serve app-owned virtual resources.
 - Surface resource request metadata to the host.
+- Override the session User-Agent string sent with every request.
 
 Current status:
 
@@ -77,6 +78,10 @@ Current status:
   resources, provider registry, resource request/decision types.
 - Under-enforced: resource policy is better covered than navigation policy, but
   enforcement still varies by backend and by request type.
+- User-Agent override: `PapyrusConfiguration.userAgent` is applied on every
+  backend (Android, iOS, macOS, Windows, Linux). When set it replaces the
+  engine default globally — for sub-resources, XHR/fetch, and
+  `navigator.userAgent` — not just the top-level document request.
 
 ### 4. Script and Bridge Policy
 

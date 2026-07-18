@@ -1031,6 +1031,11 @@ static void ensure_web_view(PapyrusLinuxPlugin* self, FlValue* config) {
     webkit_settings_set_hardware_acceleration_policy(
         settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
   }
+  const gchar* user_agent =
+      fl_value_lookup_string_or_null(effective_config, "userAgent");
+  if (user_agent != nullptr && user_agent[0] != '\0') {
+    webkit_settings_set_user_agent(settings, user_agent);
+  }
 
   WebKitUserContentManager* content_manager = webkit_user_content_manager_new();
   self->web_view = WEBKIT_WEB_VIEW(g_object_new(
