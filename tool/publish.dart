@@ -120,7 +120,7 @@ void main(List<String> args) async {
     }
 
     try {
-      final ok = await _publish(publishDir.path, dryRun: dryRun);
+      final ok = await _publishWithRetry(publishDir.path, dryRun: dryRun);
       if (!ok) {
         failed.add(pkgName);
         _log('  ERROR: publish failed for $pkgName');
@@ -291,9 +291,34 @@ Future<void> _copyTrackedPackageFiles(
   }
 }
 
+/// Outcome of a single `pub publish` attempt.
+///
+/// [retryable] is true when the failure looks like a pub.dev index
+/// propagation lag (an intra-repo dependency just published moments ago
+/// isn't resolvable yet) rather than a real validation error.
+typedef _PublishResult = ({bool ok, bool retryable});
+
 /// Runs `dart pub publish` (or `flutter pub publish` for Flutter packages)
-/// in [pkgDir]. Returns true on success.
-Future<bool> _publish(String pkgDir, {required bool dryRun}) async {
+/// in [pkgDir], retrying while the failure looks like pub.dev index
+/// propagation lag. Returns true on eventual success.
+Future<bool> _publishWithRetry(String pkgDir, {required bool dryRun}) async {
+  final deadline = DateTime.now().add(_propagationTimeout);
+  while (true) {
+    final result = await _publish(pkgDir, dryRun: dryRun);
+    if (result.ok || !result.retryable || DateTime.now().isAfter(deadline)) {
+      return result.ok;
+    }
+    _log(
+      '  Dependency not yet resolvable on pub.dev; retrying in '
+      '${_propagationPollInterval.inSeconds}s...',
+    );
+    await Future<void>.delayed(_propagationPollInterval);
+  }
+}
+
+/// Runs a single `dart pub publish` (or `flutter pub publish` for Flutter
+/// packages) invocation in [pkgDir].
+Future<_PublishResult> _publish(String pkgDir, {required bool dryRun}) async {
   // Determine whether the package uses Flutter (has flutter sdk dep).
   final pubspecContent = File('$pkgDir/pubspec.yaml').readAsStringSync();
   final isFlutter = pubspecContent.contains('sdk: flutter');
@@ -366,25 +391,28 @@ Future<bool> _publish(String pkgDir, {required bool dryRun}) async {
   await stderrDone;
 
   if (timedOut) {
-    if (exitCode != 0) {
-      return false;
-    }
-    // A publish command that exceeded our timeout is treated as failed even if
-    // it eventually exits zero after being signaled.
-    return false;
+    // A publish command that exceeded our timeout is treated as failed even
+    // if it eventually exits zero after being signaled.
+    return (ok: false, retryable: false);
   }
 
   if (exitCode != 0) {
-    // Treat already-published versions as success so re-runs are safe.
     final output = outputBuffer.toString().toLowerCase();
+    // Treat already-published versions as success so re-runs are safe.
     if (output.contains('already published') ||
         output.contains('already exists')) {
       _log('  Already published — skipping.');
-      return true;
+      return (ok: true, retryable: false);
     }
+    // A dependency published moments ago that isn't resolvable yet is a
+    // pub.dev index propagation lag, not a real validation failure.
+    final retryable =
+        output.contains('version solving failed') ||
+        output.contains("doesn't match any versions");
+    return (ok: false, retryable: retryable);
   }
 
-  return exitCode == 0;
+  return (ok: true, retryable: false);
 }
 
 void _log(String message) => print(message);
