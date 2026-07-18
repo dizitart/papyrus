@@ -38,8 +38,13 @@ const _packages = <String>[
   'packages/papyrus',
 ];
 
-/// How long to wait between publishes for pub.dev index propagation.
-const _propagationDelay = Duration(seconds: 180);
+/// How often to poll pub.dev while waiting for a dependency to become
+/// resolvable.
+const _propagationPollInterval = Duration(seconds: 15);
+
+/// Max time to wait for a just-published dependency to propagate, matching
+/// pub.dev's own "may take up-to 10 minutes" upload message.
+const _propagationTimeout = Duration(minutes: 10);
 
 /// Hard timeout for each `pub publish` invocation.
 const _publishTimeout = Duration(minutes: 15);
@@ -87,6 +92,20 @@ void main(List<String> args) async {
 
     final pubspecFile = File('$pkgDir/pubspec.yaml');
     final originalContent = pubspecFile.readAsStringSync();
+
+    // Wait for this package's intra-repo dependencies to actually be
+    // resolvable on pub.dev before attempting to publish against them —
+    // a fixed delay undershoots pub.dev's own "may take up-to 10 minutes"
+    // propagation window.
+    if (!dryRun) {
+      for (final depName
+          in _pathDepPattern
+              .allMatches(originalContent)
+              .map((m) => m.group(1)!)) {
+        await _waitUntilPublished(depName, version);
+      }
+    }
+
     final patchedContent = _replacePaths(originalContent, version);
     final didPatch = patchedContent != originalContent;
 
@@ -108,16 +127,6 @@ void main(List<String> args) async {
       }
     } finally {
       await publishDir.parent.delete(recursive: true);
-    }
-
-    // Wait for pub.dev to index the package before publishing dependents,
-    // but skip the delay after the last package or in dry-run mode.
-    final isLast = i == _packages.length - 1;
-    if (!dryRun && !isLast && failed.isEmpty) {
-      _log(
-        '  Waiting ${_propagationDelay.inSeconds}s for pub.dev propagation...',
-      );
-      await Future<void>.delayed(_propagationDelay);
     }
   }
 
@@ -158,6 +167,30 @@ String _replacePaths(String content, String version) {
   return content.replaceAllMapped(_pathDepPattern, (m) {
     return '  ${m.group(1)!}: ^$version';
   });
+}
+
+/// Polls pub.dev until [packageName] resolves at [version], so a dependent
+/// package's `pub publish` doesn't hit a stale index.
+Future<void> _waitUntilPublished(String packageName, String version) async {
+  final deadline = DateTime.now().add(_propagationTimeout);
+  var logged = false;
+  while (!await _isVersionPublished(packageName, version)) {
+    if (DateTime.now().isAfter(deadline)) {
+      _log(
+        '  WARNING: $packageName $version not visible on pub.dev after '
+        '${_propagationTimeout.inMinutes}m; proceeding anyway.',
+      );
+      return;
+    }
+    if (!logged) {
+      _log(
+        '  Waiting for $packageName $version to propagate on pub.dev '
+        '(polling every ${_propagationPollInterval.inSeconds}s)...',
+      );
+      logged = true;
+    }
+    await Future<void>.delayed(_propagationPollInterval);
+  }
 }
 
 /// Returns true when [packageName] already has [version] on pub.dev.
