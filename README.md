@@ -4,6 +4,7 @@
 [![CI](https://github.com/dizitart/papyrus/actions/workflows/ci.yml/badge.svg)](https://github.com/dizitart/papyrus/actions/workflows/ci.yml)
 [![Publish to pub.dev](https://github.com/dizitart/papyrus/actions/workflows/publish.yml/badge.svg)](https://github.com/dizitart/papyrus/actions/workflows/publish.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/discord/1565965879177519118?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.dizitart.com)
 
 <p align="center">
   <img src="docs/logo.png" width="256" alt="Papyrus logo">
